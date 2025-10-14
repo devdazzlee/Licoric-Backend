@@ -402,10 +402,15 @@ router.post("/webhook", async (req, res) => {
         const shippingDetails: any = (fullSession as any).shipping_details || null;
         const customerDetails: any = (fullSession as any).customer_details || null;
 
+        // Extract payment intent ID (handle both string and expanded object)
+        const paymentIntentId = typeof fullSession.payment_intent === 'string' 
+          ? fullSession.payment_intent 
+          : (fullSession.payment_intent as any)?.id || null;
+
         const updateData: any = {
           paymentStatus: "COMPLETED",
           status: "CONFIRMED",
-          paymentId: fullSession.payment_intent as string,
+          paymentId: paymentIntentId,
           updatedAt: new Date(),
         };
 
@@ -486,21 +491,26 @@ router.post("/webhook", async (req, res) => {
         const orderNumber = `ORD-${Date.now()}-${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
 
         // Create new order
-        const newOrder = await prisma.order.create({
-          data: {
-            orderNumber,
-            userId: orderData.userId || null,
-            guestEmail: shippingAddress.email || null,
-            totalAmount: parseFloat(orderData.total.toString()),
-            status: "CONFIRMED",
-            paymentStatus: "COMPLETED",
-            paymentId: fullSession.payment_intent as string,
-            orderNotes: orderData.notes || "",
-            shippingStreet: shippingAddress.street || "",
-            shippingCity: shippingAddress.city || "",
-            shippingState: shippingAddress.state || "",
-            shippingZip: shippingAddress.zip || "",
-            shippingCountry: shippingAddress.country || "",
+          // Extract payment intent ID (handle both string and expanded object)
+          const paymentIntentId = typeof fullSession.payment_intent === 'string' 
+            ? fullSession.payment_intent 
+            : (fullSession.payment_intent as any)?.id || null;
+
+          const newOrder = await prisma.order.create({
+            data: {
+              orderNumber,
+              userId: orderData.userId || null,
+              guestEmail: shippingAddress.email || null,
+              totalAmount: parseFloat(orderData.total.toString()),
+              status: "CONFIRMED",
+              paymentStatus: "COMPLETED",
+              paymentId: paymentIntentId,
+              orderNotes: orderData.notes || "",
+              shippingStreet: shippingAddress.street || "",
+              shippingCity: shippingAddress.city || "",
+              shippingState: shippingAddress.state || "",
+              shippingZip: shippingAddress.zip || "",
+              shippingCountry: shippingAddress.country || "",
             orderItems: {
               create: orderData.items.map((item: any) => ({
                 productId: item.pid,
