@@ -390,7 +390,27 @@ const handleTransactionCreated = async (data: any) => {
     status: data.status,
   });
 
-  // Find order by shipment ID (rate ID) or by matching order metadata
+  // First, check if order already has this tracking info (likely updated by payment webhook)
+  const existingOrder = await prisma.order.findFirst({
+    where: {
+      AND: [
+        { shipmentId: data.object_id },
+        { trackingNumber: data.tracking_number },
+      ],
+    },
+  });
+
+  if (existingOrder) {
+    console.log('ℹ️ Order already has tracking info (updated by payment webhook):', {
+      orderId: existingOrder.id,
+      orderNumber: existingOrder.orderNumber,
+      trackingNumber: existingOrder.trackingNumber,
+      note: 'Webhook arrived after order was already updated - this is normal'
+    });
+    return; // Already updated, nothing to do
+  }
+
+  // Find order by shipment ID (rate ID) or transaction ID (if not already updated)
   const order = await prisma.order.findFirst({
     where: {
       OR: [
@@ -401,7 +421,7 @@ const handleTransactionCreated = async (data: any) => {
   });
 
   if (order) {
-    console.log('✅ Found order to update:', order.id);
+    console.log('✅ Found order to update with webhook data:', order.id);
     
     await prisma.order.update({
       where: { id: order.id },
@@ -414,11 +434,12 @@ const handleTransactionCreated = async (data: any) => {
       },
     });
     
-    console.log('✅ Order updated with tracking info');
+    console.log('✅ Order updated with tracking info from webhook');
   } else {
-    console.warn('⚠️ No order found for shipment:', {
+    console.log('ℹ️ No pending order found for this shipment - likely already updated:', {
       transactionId: data.object_id,
       rateId: data.rate,
+      note: 'This usually means the order was already updated in the payment webhook (expected behavior)'
     });
   }
 };

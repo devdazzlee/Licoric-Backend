@@ -114,17 +114,42 @@ export const emailTemplates = {
         .order-info { background: white; padding: 20px; border-radius: 5px; margin: 20px 0; }
         .item { border-bottom: 1px solid #ddd; padding: 15px 0; }
         .total { font-size: 18px; font-weight: bold; color: #E85A2D; }
+        .button { 
+          display: inline-block;
+          padding: 12px 30px;
+          background: #E85A2D;
+          color: white !important;
+          text-decoration: none;
+          border-radius: 5px;
+          font-weight: bold;
+        }
+        .shipping-box {
+          background: #E3F2FD;
+          border-left: 4px solid #2196F3;
+          padding: 15px;
+          margin: 20px 0;
+          border-radius: 4px;
+        }
+        .tracking-number {
+          font-family: monospace;
+          font-size: 16px;
+          background: #f5f5f5;
+          padding: 8px 12px;
+          border-radius: 4px;
+          display: inline-block;
+          margin: 10px 0;
+        }
       </style>
     </head>
     <body>
       <div class="container">
         <div class="header">
-          <h1>Order Confirmed!</h1>
+          <h1>🎉 Order Confirmed!</h1>
         </div>
         <div class="content">
           <h2>Thank you for your order!</h2>
           <p>Hi ${orderData.customerName},</p>
-          <p>Your order has been confirmed and is being processed.</p>
+          <p>Your order has been confirmed and is being processed. We'll ship it out soon!</p>
           
           <div class="order-info">
             <h3>Order Details</h3>
@@ -142,6 +167,26 @@ export const emailTemplates = {
             
             <p class="total">Total: $${orderData.total}</p>
           </div>
+
+          ${orderData.shippingDetails?.trackingNumber ? `
+            <div class="shipping-box">
+              <h3 style="margin-top: 0; color: #1976D2;">📦 Shipping Information</h3>
+              <p><strong>Carrier:</strong> ${orderData.shippingDetails.carrier} ${orderData.shippingDetails.service ? `(${orderData.shippingDetails.service})` : ''}</p>
+              <p><strong>Tracking Number:</strong><br>
+              <span class="tracking-number">${orderData.shippingDetails.trackingNumber}</span></p>
+              ${orderData.shippingDetails.shippingCost ? `<p><strong>Shipping Cost:</strong> $${orderData.shippingDetails.shippingCost}</p>` : ''}
+              <p style="text-align: center; margin-top: 20px;">
+                <a href="${orderData.shippingDetails.trackingUrl}" class="button" style="background: #2196F3;">
+                  🚚 Track Your Package
+                </a>
+              </p>
+            </div>
+          ` : `
+            <div class="shipping-box">
+              <h3 style="margin-top: 0; color: #1976D2;">📦 Shipping Information</h3>
+              <p>Your shipping label is being created. You'll receive a tracking number within 24 hours.</p>
+            </div>
+          `}
           
           <p><strong>Shipping Address:</strong><br>
           ${orderData.shippingAddress.firstName} ${orderData.shippingAddress.lastName}<br>
@@ -149,8 +194,8 @@ export const emailTemplates = {
           ${orderData.shippingAddress.city}, ${orderData.shippingAddress.state} ${orderData.shippingAddress.zipCode}
           </p>
           
-          <p style="text-align: center; margin-top: 30px;">
-            <a href="${process.env.FRONTEND_URL}/dashboard/orders/${orderData.orderId}" class="button">Track Order</a>
+          <p style="text-align: center; margin-top: 30px; color: #666; font-size: 14px;">
+            Questions? Contact us at support@licoriceropes.com
           </p>
         </div>
       </div>

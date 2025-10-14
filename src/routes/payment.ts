@@ -665,14 +665,27 @@ router.post("/webhook", async (req, res) => {
           // Don't fail the webhook for shipment errors
         }
 
-        // Send confirmation email
+        // Send confirmation email with shipping details
         try {
           const { sendEmail, emailTemplates } = await import("../services/emailService");
           if (shippingAddress.email && newOrder.orderItems) {
+            // Fetch the updated order with shipping details
+            const orderWithShipping = await prisma.order.findUnique({
+              where: { id: newOrder.id },
+              select: {
+                trackingNumber: true,
+                trackingUrl: true,
+                shippingCarrier: true,
+                shippingService: true,
+                shippingCost: true,
+              }
+            });
+
             // Transform order data to match email template format
             const emailData = {
               customerName: shippingAddress.name || 'Customer',
               orderNumber: newOrder.orderNumber || newOrder.id,
+              orderId: newOrder.id,
               orderDate: new Date(newOrder.createdAt).toLocaleDateString(),
               status: newOrder.status,
               items: newOrder.orderItems.map((item: any) => ({
@@ -689,11 +702,19 @@ router.post("/webhook", async (req, res) => {
                 state: newOrder.shippingState || '',
                 zipCode: newOrder.shippingZip || '',
               },
+              // Include shipping details if available
+              shippingDetails: orderWithShipping ? {
+                trackingNumber: orderWithShipping.trackingNumber,
+                trackingUrl: orderWithShipping.trackingUrl,
+                carrier: orderWithShipping.shippingCarrier,
+                service: orderWithShipping.shippingService,
+                shippingCost: orderWithShipping.shippingCost ? Number(orderWithShipping.shippingCost) : shippingDetails?.shippingCost,
+              } : undefined,
             };
 
             await sendEmail({
               to: shippingAddress.email,
-              subject: 'Order Confirmation',
+              subject: 'Order Confirmation - Licorice Ropes',
               html: emailTemplates.orderConfirmation(emailData),
             });
             console.log("✅ Order confirmation email sent to:", shippingAddress.email);
