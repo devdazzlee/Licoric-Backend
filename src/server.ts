@@ -130,7 +130,12 @@ app.use(cookieParser()); // Add cookie parser middleware
 
 // Smart body parsing: raw for webhooks, JSON for everything else
 app.use((req, res, next) => {
-  if (req.originalUrl === "/api/payment/webhook" || req.originalUrl === "/api/shippo/webhook") {
+  if (
+    req.originalUrl === "/api/payment/webhook" || 
+    req.originalUrl === "/api/payments/webhook" ||
+    req.originalUrl === "/payments/webhook" ||
+    req.originalUrl === "/api/shippo/webhook"
+  ) {
     express.raw({ type: "application/json" })(req, res, next);
   } else {
     express.json({ limit: "500mb" })(req, res, next);
@@ -170,6 +175,8 @@ app.use('/api/reviews', reviewRoutes);
 app.use('/api/contact', contactRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/payment', paymentRoutes);
+app.use('/api/payments', paymentRoutes); // Alias for Stripe webhooks (plural)
+app.use('/payments', paymentRoutes); // Alias without /api prefix for Stripe webhooks
 app.use('/api/shipment', shipmentRoutes);
 app.use('/api/shippo', shippoRoutes);
 app.use('/api/notifications', notificationRoutes);

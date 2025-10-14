@@ -39,9 +39,16 @@ const notFound_1 = require("./middleware/notFound");
 const socketService_1 = require("./services/socketService");
 const app = (0, express_1.default)();
 const server = (0, http_1.createServer)(app);
+const socketAllowedOrigins = [
+    'http://localhost:3000',
+    'http://localhost:3001',
+    process.env.FRONTEND_URL,
+    process.env.CLIENT_URL,
+    'https://licorice-ropes.vercel.app',
+].filter(Boolean);
 const io = new socket_io_1.Server(server, {
     cors: {
-        origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+        origin: socketAllowedOrigins,
         methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
         credentials: true
     }
@@ -77,17 +84,45 @@ app.use((0, helmet_1.default)({
         },
     },
 }));
+const allowedOrigins = [
+    'http://localhost:3000',
+    'http://localhost:3001',
+    process.env.FRONTEND_URL,
+    process.env.CLIENT_URL,
+    'https://licorice-ropes.vercel.app',
+].filter(Boolean);
 app.use((0, cors_1.default)({
-    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
-    credentials: true
+    origin: (origin, callback) => {
+        if (!origin)
+            return callback(null, true);
+        if (allowedOrigins.includes(origin)) {
+            callback(null, true);
+        }
+        else {
+            console.warn(`❌ CORS blocked origin: ${origin}`);
+            callback(new Error('Not allowed by CORS'));
+        }
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Cookie'],
+    exposedHeaders: ['Set-Cookie']
 }));
 app.use(limiter);
 app.use((0, morgan_1.default)('combined'));
 app.use((0, cookie_parser_1.default)());
-app.use('/api/payment/webhook', express_1.default.raw({ type: 'application/json' }));
-app.use('/api/shippo/webhook', express_1.default.raw({ type: 'application/json' }));
-app.use(express_1.default.json({ limit: '10mb' }));
-app.use(express_1.default.urlencoded({ extended: true, limit: '10mb' }));
+app.use((req, res, next) => {
+    if (req.originalUrl === "/api/payment/webhook" ||
+        req.originalUrl === "/api/payments/webhook" ||
+        req.originalUrl === "/payments/webhook" ||
+        req.originalUrl === "/api/shippo/webhook") {
+        express_1.default.raw({ type: "application/json" })(req, res, next);
+    }
+    else {
+        express_1.default.json({ limit: "500mb" })(req, res, next);
+    }
+});
+app.use(express_1.default.urlencoded({ extended: true, limit: '500mb' }));
 app.get('/health', (req, res) => {
     res.status(200).json({
         status: 'OK',
@@ -116,6 +151,8 @@ app.use('/api/reviews', reviews_1.default);
 app.use('/api/contact', contact_1.default);
 app.use('/api/admin', admin_1.default);
 app.use('/api/payment', payment_1.default);
+app.use('/api/payments', payment_1.default);
+app.use('/payments', payment_1.default);
 app.use('/api/shipment', shipment_1.default);
 app.use('/api/shippo', shippo_1.default);
 app.use('/api/notifications', notification_1.default);
