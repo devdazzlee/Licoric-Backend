@@ -41,9 +41,18 @@ import { setupSocketHandlers } from './services/socketService';
 
 const app = express();
 const server = createServer(app);
+// Socket.IO CORS configuration
+const socketAllowedOrigins = [
+  'http://localhost:3000',
+  'http://localhost:3001',
+  process.env.FRONTEND_URL,
+  process.env.CLIENT_URL,
+  'https://licorice-ropes.vercel.app', // Add your frontend Vercel URL here
+].filter(Boolean);
+
 const io = new Server(server, {
   cors: {
-    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+    origin: socketAllowedOrigins,
     methods: ['GET', 'POST', 'PUT', 'DELETE' , 'PATCH' , 'OPTIONS' ],
     credentials: true
   }
@@ -88,22 +97,47 @@ app.use(helmet({
   },
 }));
 
+// CORS configuration - allow multiple origins
+const allowedOrigins = [
+  'http://localhost:3000',
+  'http://localhost:3001',
+  process.env.FRONTEND_URL,
+  process.env.CLIENT_URL,
+  'https://licorice-ropes.vercel.app', // Add your frontend Vercel URL here
+].filter(Boolean); // Remove undefined values
+
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
-  credentials: true
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      console.warn(`❌ CORS blocked origin: ${origin}`);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Cookie'],
+  exposedHeaders: ['Set-Cookie']
 }));
 
 app.use(limiter);
 app.use(morgan('combined'));
 app.use(cookieParser()); // Add cookie parser middleware
 
-// Webhook routes need raw body for signature verification
-app.use('/api/payment/webhook', express.raw({ type: 'application/json' }));
-app.use('/api/shippo/webhook', express.raw({ type: 'application/json' }));
+// Smart body parsing: raw for webhooks, JSON for everything else
+app.use((req, res, next) => {
+  if (req.originalUrl === "/api/payment/webhook" || req.originalUrl === "/api/shippo/webhook") {
+    express.raw({ type: "application/json" })(req, res, next);
+  } else {
+    express.json({ limit: "500mb" })(req, res, next);
+  }
+});
 
-// Regular JSON parsing for all other routes
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '500mb' }));
 
 // Health check endpoint
 app.get('/health', (req, res) => {
