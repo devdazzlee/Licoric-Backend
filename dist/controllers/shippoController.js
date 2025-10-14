@@ -119,19 +119,38 @@ exports.createShipmentController = createShipmentController;
 const shippoWebhook = async (req, res) => {
     try {
         console.log('📦 Shippo webhook received:', {
-            headers: req.headers,
-            body: req.body,
+            headers: {
+                'x-shippo-event': req.headers['x-shippo-event'],
+                'content-type': req.headers['content-type'],
+            },
+            bodyType: typeof req.body,
+            isBuffer: Buffer.isBuffer(req.body),
             timestamp: new Date().toISOString(),
         });
-        const { event, data } = req.body;
+        let parsedBody;
+        if (Buffer.isBuffer(req.body)) {
+            parsedBody = JSON.parse(req.body.toString());
+        }
+        else {
+            parsedBody = req.body;
+        }
+        const { event, data } = parsedBody;
+        console.log('📦 Webhook event:', {
+            event,
+            transactionId: data?.object_id,
+            trackingNumber: data?.tracking_number,
+            status: data?.status,
+        });
         if (!event || !data) {
+            console.error('❌ Missing event or data in webhook');
             return res.status(400).json({ error: 'Missing event or data' });
         }
         await (0, shipmentService_1.handleWebhookEvent)(event, data);
+        console.log('✅ Shippo webhook processed successfully');
         res.json({ received: true });
     }
     catch (error) {
-        console.error('Shippo webhook error:', error);
+        console.error('❌ Shippo webhook error:', error);
         res.status(500).json({ error: 'Webhook processing failed' });
     }
 };

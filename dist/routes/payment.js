@@ -469,11 +469,34 @@ router.post("/webhook", async (req, res) => {
                     },
                 });
                 console.log("✅ New order created successfully:", newOrder.id);
+                let shippingDetails = undefined;
                 try {
                     const { getShippingRates, createShipment } = await Promise.resolve().then(() => __importStar(require("../services/shipmentService")));
-                    if (shippingAddress.street && shippingAddress.city && shippingAddress.state && shippingAddress.zip) {
-                        console.log("📦 Creating automatic shipment label for order:", newOrder.id);
-                        const totalWeight = newOrder.orderItems.reduce((sum, item) => sum + (item.quantity * 0.5), 0);
+                    console.log("🔍 Getting shipping rates for address:", {
+                        name: shippingAddress.name,
+                        street: shippingAddress.street,
+                        city: shippingAddress.city,
+                        state: shippingAddress.state,
+                        zip: shippingAddress.zip,
+                        country: shippingAddress.country,
+                    });
+                    console.log("🔍 Checking for pre-selected rate in metadata:", {
+                        hasShippingRate: !!orderData.shippingRate,
+                        shippingRateData: orderData.shippingRate,
+                    });
+                    const preSelectedRate = orderData.shippingRate;
+                    let selectedRate;
+                    if (preSelectedRate && preSelectedRate.objectId) {
+                        console.log("✅ Using pre-selected shipping rate from frontend:", {
+                            carrier: preSelectedRate.carrier,
+                            amount: preSelectedRate.amount,
+                            serviceName: preSelectedRate.serviceName,
+                            objectId: preSelectedRate.objectId
+                        });
+                        selectedRate = preSelectedRate;
+                    }
+                    else {
+                        console.log("⚠️ No pre-selected rate, calculating shipping...");
                         const rates = await getShippingRates({
                             name: shippingAddress.name || 'Customer',
                             street1: shippingAddress.street,
@@ -484,67 +507,104 @@ router.post("/webhook", async (req, res) => {
                             email: shippingAddress.email || '',
                             phone: shippingAddress.phone || '',
                         }, [{
-                                length: '10',
-                                width: '8',
-                                height: '4',
-                                distanceUnit: 'in',
-                                weight: String(totalWeight || 1),
+                                length: '6',
+                                width: '4',
+                                height: '2',
+                                weight: '0.5',
                                 massUnit: 'lb',
+                                distanceUnit: 'in',
                             }]);
-                        if (rates && rates.length > 0) {
-                            const cheapestRate = rates.reduce((min, rate) => rate.amount < min.amount ? rate : min);
-                            console.log("📋 Selected cheapest shipping rate:", {
-                                carrier: cheapestRate.carrier,
-                                service: cheapestRate.serviceName,
-                                amount: cheapestRate.amount,
-                            });
-                            const shipment = await createShipment({
-                                toAddress: {
-                                    name: shippingAddress.name || 'Customer',
-                                    street1: shippingAddress.street,
-                                    city: shippingAddress.city,
-                                    state: shippingAddress.state,
-                                    zip: shippingAddress.zip,
-                                    country: shippingAddress.country || 'US',
-                                    email: shippingAddress.email || '',
-                                    phone: shippingAddress.phone || '',
-                                },
-                                parcels: [{
-                                        length: '10',
-                                        width: '8',
-                                        height: '4',
-                                        distanceUnit: 'in',
-                                        weight: String(totalWeight || 1),
-                                        massUnit: 'lb',
-                                    }],
-                                orderId: newOrder.id,
-                            }, cheapestRate.objectId, {
-                                carrier: cheapestRate.carrier,
-                                amount: cheapestRate.amount,
-                                serviceName: cheapestRate.serviceName,
-                            });
-                            console.log("✅ Shipment label created successfully:", {
-                                trackingNumber: shipment.trackingNumber,
-                                trackingUrl: shipment.trackingUrl,
-                            });
+                        console.log("📊 Shippo rates response:", {
+                            ratesCount: rates.length,
+                            rates: rates.map(r => ({
+                                serviceName: r.serviceName,
+                                carrier: r.carrier,
+                                amount: r.amount,
+                                estimatedDays: r.estimatedDays
+                            }))
+                        });
+                        if (rates.length === 0) {
+                            console.log("⚠️ No shipping rates available");
+                            selectedRate = null;
                         }
                         else {
-                            console.warn("⚠️ No shipping rates available for order:", newOrder.id);
+                            selectedRate = rates[0];
+                        }
+                    }
+                    if (selectedRate) {
+                        const shipmentResult = await createShipment({
+                            orderId: newOrder.id,
+                            toAddress: {
+                                name: shippingAddress.name || 'Customer',
+                                street1: shippingAddress.street,
+                                city: shippingAddress.city,
+                                state: shippingAddress.state,
+                                zip: shippingAddress.zip,
+                                country: shippingAddress.country || 'US',
+                                email: shippingAddress.email || '',
+                                phone: shippingAddress.phone || '',
+                            },
+                            parcels: [{
+                                    length: '6',
+                                    width: '4',
+                                    height: '2',
+                                    weight: '0.5',
+                                    massUnit: 'lb',
+                                    distanceUnit: 'in',
+                                }],
+                        }, selectedRate.objectId, {
+                            carrier: selectedRate.carrier,
+                            amount: selectedRate.amount,
+                            serviceName: selectedRate.serviceName
+                        });
+                        console.log("📦 Shippo shipment created for new order");
+                        const orderWithShipment = await prisma.order.findUnique({
+                            where: { id: newOrder.id },
+                            select: {
+                                trackingNumber: true,
+                                trackingUrl: true,
+                                shippingCarrier: true,
+                                shippingCost: true,
+                            }
+                        });
+                        if (orderWithShipment) {
+                            const customerPaidShippingCost = preSelectedRate?.amount || selectedRate.amount;
+                            shippingDetails = {
+                                trackingNumber: orderWithShipment.trackingNumber,
+                                trackingUrl: orderWithShipment.trackingUrl,
+                                carrier: orderWithShipment.shippingCarrier,
+                                shippingCost: customerPaidShippingCost,
+                            };
+                            console.log("📦 Shipping details prepared for email:", {
+                                ...shippingDetails,
+                                note: preSelectedRate ? "Using customer-selected rate" : "Using calculated rate"
+                            });
                         }
                     }
                     else {
-                        console.warn("⚠️ Incomplete shipping address, skipping automatic shipment creation");
+                        console.log("⚠️ No shipping rates available for new order");
                     }
                 }
                 catch (shipmentError) {
-                    console.warn("⚠️ Could not create shipment label:", shipmentError);
+                    console.error("⚠️ Failed to create Shippo shipment:", shipmentError);
                 }
                 try {
                     const { sendEmail, emailTemplates } = await Promise.resolve().then(() => __importStar(require("../services/emailService")));
                     if (shippingAddress.email && newOrder.orderItems) {
+                        const orderWithShipping = await prisma.order.findUnique({
+                            where: { id: newOrder.id },
+                            select: {
+                                trackingNumber: true,
+                                trackingUrl: true,
+                                shippingCarrier: true,
+                                shippingService: true,
+                                shippingCost: true,
+                            }
+                        });
                         const emailData = {
                             customerName: shippingAddress.name || 'Customer',
                             orderNumber: newOrder.orderNumber || newOrder.id,
+                            orderId: newOrder.id,
                             orderDate: new Date(newOrder.createdAt).toLocaleDateString(),
                             status: newOrder.status,
                             items: newOrder.orderItems.map((item) => ({
@@ -561,10 +621,17 @@ router.post("/webhook", async (req, res) => {
                                 state: newOrder.shippingState || '',
                                 zipCode: newOrder.shippingZip || '',
                             },
+                            shippingDetails: orderWithShipping ? {
+                                trackingNumber: orderWithShipping.trackingNumber,
+                                trackingUrl: orderWithShipping.trackingUrl,
+                                carrier: orderWithShipping.shippingCarrier,
+                                service: orderWithShipping.shippingService,
+                                shippingCost: orderWithShipping.shippingCost ? Number(orderWithShipping.shippingCost) : shippingDetails?.shippingCost,
+                            } : undefined,
                         };
                         await sendEmail({
                             to: shippingAddress.email,
-                            subject: 'Order Confirmation',
+                            subject: 'Order Confirmation - Licorice Ropes',
                             html: emailTemplates.orderConfirmation(emailData),
                         });
                         console.log("✅ Order confirmation email sent to:", shippingAddress.email);
