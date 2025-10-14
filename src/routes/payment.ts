@@ -307,7 +307,14 @@ router.post("/webhook", async (req, res) => {
     headers: {
       "stripe-signature": req.headers["stripe-signature"] ? "present" : "missing",
       "content-type": req.headers["content-type"],
+      "user-agent": req.headers["user-agent"],
     },
+    bodySize: req.body ? Buffer.byteLength(req.body) : 0,
+    bodyType: typeof req.body,
+    isBuffer: Buffer.isBuffer(req.body),
+    ip: req.ip,
+    method: req.method,
+    url: req.originalUrl,
   });
 
   const stripe = getStripe();
@@ -319,21 +326,44 @@ router.post("/webhook", async (req, res) => {
   const sig = req.headers["stripe-signature"] as string | undefined;
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
   
+  console.log("🔐 Webhook security check:", {
+    hasSignature: !!sig,
+    hasSecret: !!webhookSecret,
+    secretLength: webhookSecret ? webhookSecret.length : 0,
+    secretPrefix: webhookSecret ? webhookSecret.substring(0, 10) + "..." : "none",
+  });
+  
   if (!sig || !webhookSecret) {
-    console.error("❌ Missing webhook signature or secret");
+    console.error("❌ Missing webhook signature or secret", {
+      hasSignature: !!sig,
+      hasSecret: !!webhookSecret,
+    });
     return res.status(400).send("Missing webhook signature or secret");
   }
 
   let event: Stripe.Event;
   try {
+    console.log("🔍 Verifying webhook signature...");
+    // Pass req.body directly - it should be a Buffer from express.raw()
     event = stripe.webhooks.constructEvent(
       req.body,
       sig,
       webhookSecret
     );
-    console.log("✅ Webhook event verified successfully:", event.type);
+    console.log("✅ Webhook event verified successfully:", {
+      type: event.type,
+      id: event.id,
+      created: new Date(event.created * 1000).toISOString(),
+    });
   } catch (err: any) {
     console.error("❌ Webhook signature verification failed:", err.message);
+    console.error("Debug info:", {
+      bodyType: typeof req.body,
+      isBuffer: Buffer.isBuffer(req.body),
+      bodySize: req.body ? Buffer.byteLength(req.body) : 0,
+      hasSignature: !!sig,
+      hasSecret: !!webhookSecret,
+    });
     return res.status(400).send("Webhook Error");
   }
 

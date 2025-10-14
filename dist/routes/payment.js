@@ -291,6 +291,9 @@ router.post("/webhook", async (req, res) => {
             "stripe-signature": req.headers["stripe-signature"] ? "present" : "missing",
             "content-type": req.headers["content-type"],
         },
+        bodyType: typeof req.body,
+        isBuffer: Buffer.isBuffer(req.body),
+        bodyLength: req.body?.length || 0,
     });
     const stripe = getStripe();
     if (!stripe) {
@@ -305,11 +308,16 @@ router.post("/webhook", async (req, res) => {
     }
     let event;
     try {
-        event = stripe.webhooks.constructEvent(req.body, sig, webhookSecret);
+        const payload = Buffer.isBuffer(req.body)
+            ? req.body
+            : JSON.stringify(req.body);
+        event = stripe.webhooks.constructEvent(payload, sig, webhookSecret);
         console.log("✅ Webhook event verified successfully:", event.type);
     }
     catch (err) {
         console.error("❌ Webhook signature verification failed:", err.message);
+        console.error("Body type:", typeof req.body);
+        console.error("Is Buffer:", Buffer.isBuffer(req.body));
         return res.status(400).send("Webhook Error");
     }
     try {

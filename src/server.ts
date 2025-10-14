@@ -126,18 +126,19 @@ app.use(cors({
 
 app.use(limiter);
 app.use(morgan('combined'));
-app.use(cookieParser()); // Add cookie parser middleware
 
-// Webhook routes need raw body for signature verification
-// Apply raw body parser ONLY to webhook endpoints
-app.use('/api/payment/webhook', express.raw({ type: 'application/json' }));
-app.use('/api/payments/webhook', express.raw({ type: 'application/json' }));
-app.use('/payments/webhook', express.raw({ type: 'application/json' }));
-app.use('/api/shippo/webhook', express.raw({ type: 'application/json' }));
+// Body parsing middleware - MUST be before cookieParser
+// Use raw body only for webhook routes; json for others
+app.use((req, res, next) => {
+  if (req.originalUrl === "/api/payment/webhook" || req.originalUrl === "/api/shippo/webhook") {
+    express.raw({ type: "application/json" })(req, res, next);
+  } else {
+    express.json({ limit: "500mb" })(req, res, next);
+  }
+});
 
-// For all other routes, use JSON and URL-encoded parsers
-app.use(express.json({ limit: "500mb" }));
 app.use(express.urlencoded({ extended: true, limit: '500mb' }));
+app.use(cookieParser()); // Add cookie parser AFTER body parsing
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -170,8 +171,6 @@ app.use('/api/reviews', reviewRoutes);
 app.use('/api/contact', contactRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/payment', paymentRoutes);
-app.use('/api/payments', paymentRoutes); // Alias for Stripe webhooks (plural)
-app.use('/payments', paymentRoutes); // Alias without /api prefix for Stripe webhooks
 app.use('/api/shipment', shipmentRoutes);
 app.use('/api/shippo', shippoRoutes);
 app.use('/api/notifications', notificationRoutes);

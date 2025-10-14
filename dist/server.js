@@ -111,11 +111,21 @@ app.use((0, cors_1.default)({
 app.use(limiter);
 app.use((0, morgan_1.default)('combined'));
 app.use((0, cookie_parser_1.default)());
+app.use((req, res, next) => {
+    if (req.originalUrl === '/api/payment/webhook' ||
+        req.originalUrl === '/api/payments/webhook' ||
+        req.originalUrl === '/payments/webhook' ||
+        req.originalUrl === '/api/shippo/webhook') {
+        next();
+    }
+    else {
+        express_1.default.json({ limit: "500mb" })(req, res, next);
+    }
+});
 app.use('/api/payment/webhook', express_1.default.raw({ type: 'application/json' }));
 app.use('/api/payments/webhook', express_1.default.raw({ type: 'application/json' }));
 app.use('/payments/webhook', express_1.default.raw({ type: 'application/json' }));
 app.use('/api/shippo/webhook', express_1.default.raw({ type: 'application/json' }));
-app.use(express_1.default.json({ limit: "500mb" }));
 app.use(express_1.default.urlencoded({ extended: true, limit: '500mb' }));
 app.get('/health', (req, res) => {
     res.status(200).json({
