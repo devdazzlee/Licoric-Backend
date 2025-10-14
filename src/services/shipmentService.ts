@@ -352,42 +352,86 @@ export const getShipmentStatus = async (shipmentId: string) => {
 // Handle webhook events
 export const handleWebhookEvent = async (eventType: string, data: any) => {
   try {
-    console.log(`📦 Shippo webhook received: ${eventType}`, data);
+    console.log(`📦 Shippo webhook received: ${eventType}`, {
+      objectId: data.object_id,
+      trackingNumber: data.tracking_number,
+      status: data.status,
+    });
     
-    switch (eventType) {
-      case 'transaction.created':
+    // Handle both underscore and dot notation
+    const normalizedEvent = eventType.replace('.', '_');
+    
+    switch (normalizedEvent) {
+      case 'transaction_created':
         await handleTransactionCreated(data);
         break;
-      case 'transaction.updated':
+      case 'transaction_updated':
         await handleTransactionUpdated(data);
         break;
-      case 'track.updated':
+      case 'track_updated':
         await handleTrackUpdated(data);
         break;
       default:
-        console.log(`Unhandled webhook event: ${eventType}`);
+        console.log(`ℹ️ Unhandled webhook event: ${eventType}`);
     }
-    } catch (error) {
-    console.error('Webhook handling error:', error);
-      throw error;
+  } catch (error) {
+    console.error('❌ Webhook handling error:', error);
+    throw error;
   }
 };
 
 const handleTransactionCreated = async (data: any) => {
-  // Transaction created - label is ready
-  await prisma.order.updateMany({
-    where: { shipmentId: data.objectId },
-    data: {
-      updatedAt: new Date(),
+  // Transaction created - label is ready, update order with tracking info
+  console.log('📦 Processing transaction_created webhook:', {
+    objectId: data.object_id,
+    trackingNumber: data.tracking_number,
+    trackingUrl: data.tracking_url_provider,
+    labelUrl: data.label_url,
+    status: data.status,
+  });
+
+  // Find order by shipment ID (rate ID) or by matching order metadata
+  const order = await prisma.order.findFirst({
+    where: {
+      OR: [
+        { shipmentId: data.object_id },
+        { shipmentId: data.rate },
+      ],
     },
   });
+
+  if (order) {
+    console.log('✅ Found order to update:', order.id);
+    
+    await prisma.order.update({
+      where: { id: order.id },
+      data: {
+        trackingNumber: data.tracking_number || null,
+        trackingUrl: data.tracking_url_provider || null,
+        shippingLabelUrl: data.label_url || null,
+        shipmentId: data.object_id, // Update to transaction ID
+        updatedAt: new Date(),
+      },
+    });
+    
+    console.log('✅ Order updated with tracking info');
+  } else {
+    console.warn('⚠️ No order found for shipment:', {
+      transactionId: data.object_id,
+      rateId: data.rate,
+    });
+  }
 };
 
 const handleTransactionUpdated = async (data: any) => {
   // Transaction updated - status changed
+  console.log('📦 Processing transaction_updated webhook');
+  
   await prisma.order.updateMany({
-    where: { shipmentId: data.objectId },
+    where: { shipmentId: data.object_id },
     data: {
+      trackingNumber: data.tracking_number || undefined,
+      trackingUrl: data.tracking_url_provider || undefined,
       updatedAt: new Date(),
     },
   });
@@ -395,9 +439,12 @@ const handleTransactionUpdated = async (data: any) => {
 
 const handleTrackUpdated = async (data: any) => {
   // Tracking updated - delivery status changed
+  console.log('📦 Processing track_updated webhook');
+  
   await prisma.order.updateMany({
-    where: { trackingNumber: data.trackingNumber },
+    where: { trackingNumber: data.tracking_number },
     data: {
+      trackingUrl: data.tracking_url_provider || undefined,
       updatedAt: new Date(),
     },
   });
