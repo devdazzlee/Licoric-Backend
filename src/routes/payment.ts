@@ -528,17 +528,41 @@ router.post("/webhook", async (req, res) => {
 
         console.log("✅ New order created successfully:", newOrder.id);
 
-       // Create shipment label automatically if shipping info is available
+        // Create Shippo shipment for the new order (like Licrorice)
+        let shippingDetails: any = undefined;
         try {
           const { getShippingRates, createShipment } = await import("../services/shipmentService");
           
-          if (shippingAddress.street && shippingAddress.city && shippingAddress.state && shippingAddress.zip) {
-            console.log("📦 Creating automatic shipment label for order:", newOrder.id);
-            
-            // Calculate total weight from items (default to 0.5 lbs per item)
-            const totalWeight = newOrder.orderItems.reduce((sum, item) => sum + (item.quantity * 0.5), 0);
-            
-            // Get shipping rates
+          console.log("🔍 Getting shipping rates for address:", {
+            name: shippingAddress.name,
+            street: shippingAddress.street,
+            city: shippingAddress.city,
+            state: shippingAddress.state,
+            zip: shippingAddress.zip,
+            country: shippingAddress.country,
+          });
+          
+          // Check if pre-selected shipping rate exists in metadata
+          console.log("🔍 Checking for pre-selected rate in metadata:", {
+            hasShippingRate: !!orderData.shippingRate,
+            shippingRateData: orderData.shippingRate,
+          });
+          
+          const preSelectedRate = orderData.shippingRate;
+          let selectedRate;
+          
+          if (preSelectedRate && preSelectedRate.objectId) {
+            // Use the pre-selected rate from frontend (CORRECT - already paid for)
+            console.log("✅ Using pre-selected shipping rate from frontend:", {
+              carrier: preSelectedRate.carrier,
+              amount: preSelectedRate.amount,
+              serviceName: preSelectedRate.serviceName,
+              objectId: preSelectedRate.objectId
+            });
+            selectedRate = preSelectedRate;
+          } else {
+            // Fallback: Calculate shipping rates (old behavior)
+            console.log("⚠️ No pre-selected rate, calculating shipping...");
             const rates = await getShippingRates(
               {
                 name: shippingAddress.name || 'Customer',
@@ -551,70 +575,94 @@ router.post("/webhook", async (req, res) => {
                 phone: shippingAddress.phone || '',
               },
               [{
-                length: '10',
-                width: '8',
-                height: '4',
-                distanceUnit: 'in',
-                weight: String(totalWeight || 1),
-                massUnit: 'lb',
+                length: '6',
+                width: '4',
+                height: '2',
+                weight: '0.5',
+                massUnit: 'lb' as const,
+                distanceUnit: 'in' as const,
               }]
             );
-
-            if (rates && rates.length > 0) {
-              // Select cheapest rate
-              const cheapestRate = rates.reduce((min, rate) => 
-                rate.amount < min.amount ? rate : min
-              );
-              
-              console.log("📋 Selected cheapest shipping rate:", {
-                carrier: cheapestRate.carrier,
-                service: cheapestRate.serviceName,
-                amount: cheapestRate.amount,
-              });
-
-              // Create shipment with selected rate
-              const shipment = await createShipment(
-                {
-                  toAddress: {
-                    name: shippingAddress.name || 'Customer',
-                    street1: shippingAddress.street,
-                    city: shippingAddress.city,
-                    state: shippingAddress.state,
-                    zip: shippingAddress.zip,
-                    country: shippingAddress.country || 'US',
-                    email: shippingAddress.email || '',
-                    phone: shippingAddress.phone || '',
-                  },
-                  parcels: [{
-                    length: '10',
-                    width: '8',
-                    height: '4',
-                    distanceUnit: 'in',
-                    weight: String(totalWeight || 1),
-                    massUnit: 'lb',
-                  }],
-                  orderId: newOrder.id,
-                },
-                cheapestRate.objectId,
-                {
-                  carrier: cheapestRate.carrier,
-                  amount: cheapestRate.amount,
-                  serviceName: cheapestRate.serviceName,
-                }
-              );
-
-              console.log("✅ Shipment label created successfully:", {
-                trackingNumber: shipment.trackingNumber,
-                trackingUrl: shipment.trackingUrl,
-              });
+            
+            console.log("📊 Shippo rates response:", {
+              ratesCount: rates.length,
+              rates: rates.map(r => ({
+                serviceName: r.serviceName,
+                carrier: r.carrier,
+                amount: r.amount,
+                estimatedDays: r.estimatedDays
+              }))
+            });
+            
+            if (rates.length === 0) {
+              console.log("⚠️ No shipping rates available");
+              selectedRate = null;
             } else {
-              console.warn("⚠️ No shipping rates available for order:", newOrder.id);
+              selectedRate = rates[0];
+            }
+          }
+          
+          if (selectedRate) {
+            const shipmentResult = await createShipment({
+              orderId: newOrder.id,
+              toAddress: {
+                name: shippingAddress.name || 'Customer',
+                street1: shippingAddress.street,
+                city: shippingAddress.city,
+                state: shippingAddress.state,
+                zip: shippingAddress.zip,
+                country: shippingAddress.country || 'US',
+                email: shippingAddress.email || '',
+                phone: shippingAddress.phone || '',
+              },
+              parcels: [{
+                length: '6',
+                width: '4',
+                height: '2',
+                weight: '0.5',
+                massUnit: 'lb' as const,
+                distanceUnit: 'in' as const,
+              }],
+            }, selectedRate.objectId, {
+              carrier: selectedRate.carrier,
+              amount: selectedRate.amount,
+              serviceName: selectedRate.serviceName
+            });
+            
+            console.log("📦 Shippo shipment created for new order");
+            
+            // Fetch the updated order with shipment details
+            const orderWithShipment = await prisma.order.findUnique({
+              where: { id: newOrder.id },
+              select: {
+                trackingNumber: true,
+                trackingUrl: true,
+                shippingCarrier: true,
+                shippingCost: true,
+              }
+            });
+            
+            if (orderWithShipment) {
+              // IMPORTANT: Use the rate that customer SELECTED and PAID FOR, not the Shippo transaction rate
+              const customerPaidShippingCost = preSelectedRate?.amount || selectedRate.amount;
+              
+              shippingDetails = {
+                trackingNumber: orderWithShipment.trackingNumber,
+                trackingUrl: orderWithShipment.trackingUrl,
+                carrier: orderWithShipment.shippingCarrier,
+                shippingCost: customerPaidShippingCost, // Use customer-selected rate
+              };
+              console.log("📦 Shipping details prepared for email:", {
+                ...shippingDetails,
+                note: preSelectedRate ? "Using customer-selected rate" : "Using calculated rate"
+              });
             }
           } else {
-            console.warn("⚠️ Incomplete shipping address, skipping automatic shipment creation");
+            console.log("⚠️ No shipping rates available for new order");
           }
         } catch (shipmentError) {
-          console.warn("⚠️ Could not create shipment label:", shipmentError);
+          console.error("⚠️ Failed to create Shippo shipment:", shipmentError);
+          // Don't fail the webhook for shipment errors
         }
 
         // Send confirmation email
