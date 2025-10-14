@@ -26,13 +26,8 @@ const updateShipmentValidation = [
 ];
 router.post('/create', auth_1.auth, auth_1.adminAuth, createShipmentValidation, async (req, res) => {
     try {
-        const { orderId, carrier, trackingNumber, estimatedDelivery } = req.body;
-        const shipment = await shipmentService_1.ShipmentService.createShipment({
-            orderId,
-            carrier,
-            trackingNumber,
-            ...(estimatedDelivery && { estimatedDelivery: new Date(estimatedDelivery) })
-        });
+        const { orderId, address, parcels, selectedRateId, rateData } = req.body;
+        const shipment = await (0, shipmentService_1.createShipment)({ orderId, toAddress: address, parcels }, selectedRateId, rateData);
         res.status(201).json({
             success: true,
             message: 'Shipment created successfully',
@@ -50,17 +45,10 @@ router.post('/create', auth_1.auth, auth_1.adminAuth, createShipmentValidation, 
 router.put('/:shipmentId/status', auth_1.auth, auth_1.adminAuth, updateShipmentValidation, async (req, res) => {
     try {
         const { shipmentId } = req.params;
-        const updateData = req.body;
-        if (updateData.estimatedDelivery) {
-            updateData.estimatedDelivery = new Date(updateData.estimatedDelivery);
-        }
-        if (updateData.actualDelivery) {
-            updateData.actualDelivery = new Date(updateData.actualDelivery);
-        }
-        const shipment = await shipmentService_1.ShipmentService.updateShipmentStatus(shipmentId, updateData);
+        const shipment = await (0, shipmentService_1.getShipmentStatus)(shipmentId);
         res.json({
             success: true,
-            message: 'Shipment status updated successfully',
+            message: 'Shipment status retrieved successfully',
             data: { shipment }
         });
     }
@@ -82,10 +70,27 @@ router.get('/track/:trackingNumber', auth_1.auth, async (req, res) => {
             });
             return;
         }
-        const trackingInfo = await shipmentService_1.ShipmentService.getTrackingInfo(trackingNumber);
+        const shipment = await prisma.order.findFirst({
+            where: { trackingNumber },
+            select: {
+                trackingNumber: true,
+                trackingUrl: true,
+                shippingCarrier: true,
+                shippingService: true,
+                shipmentId: true,
+                status: true,
+            }
+        });
+        if (!shipment) {
+            res.status(404).json({
+                success: false,
+                message: 'Tracking number not found'
+            });
+            return;
+        }
         res.json({
             success: true,
-            data: trackingInfo
+            data: shipment
         });
     }
     catch (error) {
@@ -98,17 +103,45 @@ router.get('/track/:trackingNumber', auth_1.auth, async (req, res) => {
 });
 router.get('/', auth_1.auth, auth_1.adminAuth, async (req, res) => {
     try {
-        const { status, carrier, page = 1, limit = 10 } = req.query;
-        const filters = {
-            status: status,
-            carrier: carrier,
-            page: parseInt(page),
-            limit: parseInt(limit)
-        };
-        const result = await shipmentService_1.ShipmentService.getShipments(filters);
+        const { page = 1, limit = 10 } = req.query;
+        const skip = (parseInt(page) - 1) * parseInt(limit);
+        const [orders, total] = await Promise.all([
+            prisma.order.findMany({
+                where: {
+                    trackingNumber: { not: null }
+                },
+                select: {
+                    id: true,
+                    orderNumber: true,
+                    trackingNumber: true,
+                    trackingUrl: true,
+                    shippingCarrier: true,
+                    shippingService: true,
+                    shipmentId: true,
+                    status: true,
+                    createdAt: true,
+                },
+                orderBy: { createdAt: 'desc' },
+                skip,
+                take: parseInt(limit)
+            }),
+            prisma.order.count({
+                where: {
+                    trackingNumber: { not: null }
+                }
+            })
+        ]);
         res.json({
             success: true,
-            data: result
+            data: {
+                shipments: orders,
+                pagination: {
+                    page: parseInt(page),
+                    limit: parseInt(limit),
+                    total,
+                    totalPages: Math.ceil(total / parseInt(limit))
+                }
+            }
         });
     }
     catch (error) {
@@ -121,10 +154,26 @@ router.get('/', auth_1.auth, auth_1.adminAuth, async (req, res) => {
 });
 router.get('/analytics', auth_1.auth, auth_1.adminAuth, async (req, res) => {
     try {
-        const analytics = await shipmentService_1.ShipmentService.getShipmentAnalytics();
+        const [total, byCarrier, byStatus] = await Promise.all([
+            prisma.order.count({ where: { trackingNumber: { not: null } } }),
+            prisma.order.groupBy({
+                by: ['shippingCarrier'],
+                _count: true,
+                where: { shippingCarrier: { not: null } }
+            }),
+            prisma.order.groupBy({
+                by: ['status'],
+                _count: true,
+                where: { trackingNumber: { not: null } }
+            })
+        ]);
         res.json({
             success: true,
-            data: analytics
+            data: {
+                totalShipments: total,
+                byCarrier,
+                byStatus
+            }
         });
     }
     catch (error) {
@@ -196,9 +245,9 @@ router.put('/bulk-update', auth_1.auth, auth_1.adminAuth, async (req, res) => {
             });
             return;
         }
-        const results = await Promise.allSettled(shipments.map(shipment => shipmentService_1.ShipmentService.updateShipmentStatus(shipment.id, {
-            status: shipment.status,
-            notes: shipment.notes
+        const results = await Promise.allSettled(shipments.map(shipment => prisma.order.update({
+            where: { id: shipment.orderId },
+            data: { status: shipment.status }
         })));
         const successful = results.filter(r => r.status === 'fulfilled').length;
         const failed = results.filter(r => r.status === 'rejected').length;
@@ -207,8 +256,7 @@ router.put('/bulk-update', auth_1.auth, auth_1.adminAuth, async (req, res) => {
             message: `Bulk update completed: ${successful} successful, ${failed} failed`,
             data: {
                 successful,
-                failed,
-                results
+                failed
             }
         });
     }

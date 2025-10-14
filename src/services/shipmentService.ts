@@ -1,391 +1,404 @@
-import { PrismaClient, ShipmentStatus } from '@prisma/client';
-import { CreateShipmentRequest, UpdateShipmentRequest } from '../types';
+import { Shippo } from 'shippo';
+import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
-export class ShipmentService {
-  /**
-   * Create a new shipment for an order
-   */
-  static async createShipment(data: CreateShipmentRequest): Promise<any> {
-    try {
-      // Verify order exists and is ready for shipment
-      const order = await prisma.order.findUnique({
-        where: { id: data.orderId },
-        include: { 
-          user: true,
-          shipment: true,
-          orderItems: {
-            include: {
-              product: true
-            }
-          }
-        }
-      });
-
-      if (!order) {
-        throw new Error('Order not found');
-      }
-
-      if (order.status !== 'CONFIRMED' && order.status !== 'PROCESSING') {
-        throw new Error('Order is not ready for shipment');
-      }
-
-      if (order.shipment) {
-        throw new Error('Shipment already exists for this order');
-      }
-
-      // Calculate shipping cost and weight
-      const shippingCost = this.calculateShippingCost(order.orderItems);
-      const weight = this.calculateWeight(order.orderItems);
-
-      // Create shipment record
-      const shipment = await prisma.shipment.create({
-        data: {
-          orderId: data.orderId,
-          carrier: data.carrier,
-          trackingNumber: data.trackingNumber,
-          status: 'PENDING',
-          estimatedDelivery: data.estimatedDelivery,
-          shippingCost,
-          weight,
-          dimensions: {
-            length: 10,
-            width: 8,
-            height: 2
-          }
-        }
-      });
-
-      // Update order status
-      await prisma.order.update({
-        where: { id: data.orderId },
-        data: {
-          status: 'PROCESSING'
-        }
-      });
-
-      // Create notification
-      await prisma.notification.create({
-        data: {
-          userId: order.userId,
-          title: 'Order Shipped',
-          message: `Your order has been shipped! Tracking number: ${data.trackingNumber}`,
-          type: 'SHIPMENT',
-          relatedId: data.orderId
-        }
-      });
-
-      return shipment;
-    } catch (error) {
-      console.error('Error creating shipment:', error);
-      throw error;
-    }
+// Initialize Shippo client
+function getShippoClient(): Shippo {
+  // Use live token for testing since test tokens don't generate real tracking data
+  const token = process.env.SHIPPO_LIVE_TOKEN || process.env.SHIPPO_TEST_TOKEN;
+  
+  if (!token) {
+    throw new Error('Shippo token not configured');
   }
+  
+  const isLiveToken = token.startsWith('shippo_live_');
+  console.log('🔑 Using Shippo token:', {
+    type: isLiveToken ? 'LIVE' : 'TEST',
+    token: token.substring(0, 20) + '...',
+  });
+  
+  return new Shippo({
+    apiKeyHeader: token,
+    shippoApiVersion: "2018-02-08",
+  });
+}
 
-  /**
-   * Update shipment status
-   */
-  static async updateShipmentStatus(
-    shipmentId: string, 
-    data: UpdateShipmentRequest
-  ): Promise<any> {
-    try {
-      const shipment = await prisma.shipment.findUnique({
-        where: { id: shipmentId },
-        include: { order: { include: { user: true } } }
-      });
+// Default sender address (Update with your business address)
+const DEFAULT_SENDER_ADDRESS = {
+  name: 'Licorice Ropes',
+  company: 'Licorice Ropes LLC',
+  email: 'info@licoriceropes.com',
+  phone: '5551234567',
+  street1: '123 Main Street',
+  street2: '',
+  city: 'New York',
+  state: 'NY',
+  zip: '10001',
+  country: 'US',
+};
 
-      if (!shipment) {
-        throw new Error('Shipment not found');
-      }
+export interface ShippingAddress {
+  name: string;
+  company?: string;
+  email: string;
+  phone?: string;
+  street1: string;
+  street2?: string;
+  city: string;
+  state: string;
+  zip: string;
+  country: string;
+}
 
-      const updateData: any = {};
-      if (data.status) updateData.status = data.status;
-      if (data.trackingNumber) updateData.trackingNumber = data.trackingNumber;
-      if (data.carrier) updateData.carrier = data.carrier;
-      if (data.estimatedDelivery) updateData.estimatedDelivery = data.estimatedDelivery;
-      if (data.actualDelivery) updateData.actualDelivery = data.actualDelivery;
-      if (data.notes) updateData.notes = data.notes;
+export interface ShipmentData {
+  orderId: string;
+  toAddress: ShippingAddress;
+  parcels: Array<{
+    length: string;
+    width: string;
+    height: string;
+    weight: string;
+    massUnit: 'lb' | 'kg';
+    distanceUnit: 'in' | 'cm';
+  }>;
+}
 
-      const updatedShipment = await prisma.shipment.update({
-        where: { id: shipmentId },
-        data: updateData
-      });
-
-      // Update order status based on shipment status
-      let orderStatus = shipment.order.status;
-      if (data.status) {
-        switch (data.status) {
-          case 'SHIPPED':
-          case 'IN_TRANSIT':
-            orderStatus = 'SHIPPED';
-            break;
-          case 'DELIVERED':
-            orderStatus = 'DELIVERED';
-            break;
-          case 'EXCEPTION':
-            // Keep current status but add note
-            break;
-        }
-      }
-
-      if (orderStatus !== shipment.order.status) {
-        await prisma.order.update({
-          where: { id: shipment.orderId },
-          data: { status: orderStatus }
-        });
-      }
-
-      // Create notification for status changes
-      if (data.status) {
-        await this.createStatusNotification(shipment.order.userId, shipment.orderId, data.status);
-      }
-
-      return updatedShipment;
-    } catch (error) {
-      console.error('Error updating shipment:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Get shipment tracking information
-   */
-  static async getTrackingInfo(trackingNumber: string): Promise<any> {
-    try {
-      const shipment = await prisma.shipment.findUnique({
-        where: { trackingNumber },
-        include: {
-          order: {
-            include: {
-              user: true,
-              orderItems: {
-                include: {
-                  product: true
-                }
-              }
-            }
-          }
-        }
-      });
-
-      if (!shipment) {
-        throw new Error('Shipment not found');
-      }
-
-      // In a real implementation, you would integrate with carrier APIs
-      // to get real-time tracking information
-      const trackingEvents = await this.getTrackingEvents(trackingNumber, shipment.carrier);
-
-      return {
-        shipment,
-        trackingEvents
-      };
-    } catch (error) {
-      console.error('Error getting tracking info:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Get all shipments with filtering
-   */
-  static async getShipments(filters: {
-    status?: ShipmentStatus;
-    carrier?: string;
-    page?: number;
-    limit?: number;
-  } = {}): Promise<any> {
-    try {
-      const page = filters.page || 1;
-      const limit = filters.limit || 10;
-      const skip = (page - 1) * limit;
-
-      const where: any = {};
-      if (filters.status) where.status = filters.status;
-      if (filters.carrier) where.carrier = filters.carrier;
-
-      const [shipments, total] = await Promise.all([
-        prisma.shipment.findMany({
-          where,
-          include: {
-            order: {
-              include: {
-                user: {
-                  select: {
-                    firstName: true,
-                    lastName: true,
-                    email: true
-                  }
-                }
-              }
-            }
-          },
-          orderBy: { createdAt: 'desc' },
-          skip,
-          take: limit
-        }),
-        prisma.shipment.count({ where })
-      ]);
-
-      const totalPages = Math.ceil(total / limit);
-
-      return {
-        shipments,
-        pagination: {
-          currentPage: page,
-          totalPages,
-          totalItems: total,
-          itemsPerPage: limit,
-          hasNext: page < totalPages,
-          hasPrev: page > 1
-        }
-      };
-    } catch (error) {
-      console.error('Error getting shipments:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Calculate shipping cost based on order items
-   */
-  private static calculateShippingCost(orderItems: any[]): number {
-    // Simple shipping calculation - in real app, integrate with shipping APIs
-    const totalWeight = this.calculateWeight(orderItems);
-    const baseCost = 5.99;
+// Validate shipping address
+export const validateAddress = async (address: ShippingAddress) => {
+  try {
+    const shippo = getShippoClient();
     
-    if (totalWeight > 5) {
-      return baseCost + ((totalWeight - 5) * 0.5);
+    const validationResult = await shippo.addresses.create({
+      name: address.name,
+      company: address.company || '',
+      street1: address.street1,
+      street2: address.street2 || '',
+      city: address.city,
+      state: address.state,
+      zip: address.zip,
+      country: address.country,
+      email: address.email,
+      phone: address.phone || '',
+    });
+
+    // More lenient validation - accept address if it has basic required fields
+    const hasRequiredFields = !!(
+      validationResult.name &&
+      validationResult.street1 &&
+      validationResult.city &&
+      validationResult.state &&
+      validationResult.zip &&
+      validationResult.country
+    );
+
+    return {
+      isValid: hasRequiredFields || validationResult.isComplete,
+      validatedAddress: validationResult,
+      suggestions: [],
+    };
+  } catch (error) {
+    console.error('Address validation error:', error);
+    
+    // If Shippo validation fails, do basic validation instead
+    const hasRequiredFields = !!(
+      address.name &&
+      address.street1 &&
+      address.city &&
+      address.state &&
+      address.zip &&
+      address.country
+    );
+    
+    return {
+      isValid: hasRequiredFields,
+      validatedAddress: address,
+      suggestions: [],
+    };
+  }
+};
+
+// Get shipping rates
+export const getShippingRates = async (toAddress: ShippingAddress, parcels: ShipmentData['parcels']) => {
+  try {
+    const shippo = getShippoClient();
+    
+    console.log('🚚 Creating Shippo shipment request for rates');
+    
+    // Create shipment for rate calculation
+    const shipment = await shippo.shipments.create({
+      addressFrom: DEFAULT_SENDER_ADDRESS,
+      addressTo: {
+        name: toAddress.name,
+        company: toAddress.company || '',
+        street1: toAddress.street1,
+        street2: toAddress.street2 || '',
+        city: toAddress.city,
+        state: toAddress.state,
+        zip: toAddress.zip,
+        country: toAddress.country,
+        email: toAddress.email,
+        phone: toAddress.phone || '',
+      },
+      parcels: parcels,
+    });
+
+    console.log('📦 Shippo shipment response:', {
+      objectId: shipment.objectId,
+      status: shipment.status,
+      ratesCount: shipment.rates?.length || 0,
+    });
+
+    return shipment.rates.map((rate: any) => ({
+      objectId: rate.objectId || rate.object_id,
+      serviceName: rate.servicelevel?.name || rate.servicelevelName || rate.servicelevel_name || rate.attributes?.join(', ') || 'Standard Shipping',
+      serviceToken: rate.servicelevel?.token || rate.servicelevelToken || rate.servicelevel_token || '',
+      carrier: rate.provider || rate.carrier || 'USPS',
+      amount: parseFloat(rate.amount || '0'),
+      currency: rate.currency || 'USD',
+      estimatedDays: rate.estimatedDays || rate.estimated_days || rate.duration_terms || 3,
+      durationTerms: rate.durationTerms || rate.duration_terms || '',
+    }));
+  } catch (error: any) {
+    console.error('❌ Shipping rates error:', {
+      message: error.message,
+      status: error.status,
+    });
+    throw new Error('Failed to get shipping rates');
+  }
+};
+
+// Create shipment and purchase label
+export const createShipment = async (
+  shipmentData: ShipmentData, 
+  selectedRateId: string,
+  selectedRateData?: { carrier: string; amount: number; serviceName: string }
+) => {
+  try {
+    const shippo = getShippoClient();
+    
+    // Validate address data before creating transaction
+    const address = shipmentData.toAddress;
+    if (!address.name || !address.street1 || !address.city || !address.state || !address.zip || !address.country) {
+      throw new Error('Invalid address data: Missing required fields');
     }
     
-    return baseCost;
-  }
-
-  /**
-   * Calculate total weight of order items
-   */
-  private static calculateWeight(orderItems: any[]): number {
-    return orderItems.reduce((total, item) => {
-      // Assuming each product has a weight of 0.1 lbs
-      return total + (item.quantity * 0.1);
-    }, 0);
-  }
-
-  /**
-   * Get tracking events from carrier API
-   */
-  private static async getTrackingEvents(trackingNumber: string, carrier: string): Promise<any[]> {
-    // Mock tracking events - in real implementation, integrate with carrier APIs
-    const mockEvents = [
-      {
-        date: new Date(),
-        status: 'Package picked up',
-        location: 'Origin Facility',
-        description: 'Package has been picked up from the origin facility'
+    console.log('📦 Creating shipment for order:', shipmentData.orderId);
+    
+    // Create shipment with proper configuration
+    const shipment = await shippo.shipments.create({
+      addressFrom: DEFAULT_SENDER_ADDRESS,
+      addressTo: {
+        name: shipmentData.toAddress.name,
+        company: shipmentData.toAddress.company || '',
+        street1: shipmentData.toAddress.street1,
+        street2: shipmentData.toAddress.street2 || '',
+        city: shipmentData.toAddress.city,
+        state: shipmentData.toAddress.state,
+        zip: shipmentData.toAddress.zip,
+        country: shipmentData.toAddress.country,
+        email: shipmentData.toAddress.email,
+        phone: shipmentData.toAddress.phone || '',
+        isResidential: true,
       },
-      {
-        date: new Date(Date.now() - 86400000), // 1 day ago
-        status: 'In transit',
-        location: 'Sort Facility',
-        description: 'Package is in transit to the destination'
+      parcels: shipmentData.parcels,
+      extra: {
+        bypassAddressValidation: true
       },
-      {
-        date: new Date(Date.now() - 172800000), // 2 days ago
-        status: 'Processed',
-        location: 'Origin Facility',
-        description: 'Package has been processed at the origin facility'
+      metadata: `Order ${shipmentData.orderId}`,
+      shipmentDate: new Date().toISOString(),
+    });
+
+    // Purchase the selected rate
+    console.log('💳 Creating Shippo transaction for rate:', selectedRateId);
+    
+    const transaction = await shippo.transactions.create({
+      rate: selectedRateId,
+      labelFileType: 'PDF',
+      metadata: `Order ${shipmentData.orderId}`,
+    });
+
+    console.log('🔍 Transaction response:', {
+      objectId: transaction.objectId,
+      trackingNumber: transaction.trackingNumber,
+      status: transaction.status,
+    });
+
+    // Handle QUEUED transactions - wait for completion
+    if (transaction.status === 'QUEUED') {
+      console.log('⏳ Transaction is QUEUED, waiting for completion...');
+      await new Promise(resolve => setTimeout(resolve, 3000)); // Wait 3 seconds
+      
+      try {
+        if (transaction.objectId) {
+          const completedTransaction = await shippo.transactions.get(transaction.objectId);
+          Object.assign(transaction, completedTransaction);
+        }
+      } catch (retryError) {
+        console.log('⚠️ Could not get completed transaction, using QUEUED data');
       }
-    ];
+    }
 
-    return mockEvents;
+    // Check if transaction failed
+    if (transaction.status === 'ERROR') {
+      console.error('❌ Shippo transaction failed');
+      const errorMessage = transaction.messages?.map(m => `${m.source}: ${m.text}`).join('; ') || 'Unknown error';
+      throw new Error(`Shippo transaction failed: ${errorMessage}`);
+    }
+
+    // Only proceed if transaction is successful
+    if (transaction.status !== 'SUCCESS') {
+      throw new Error(`Shippo transaction not successful: ${transaction.status}`);
+    }
+
+    // Get tracking data
+    const trackingNumber = transaction.trackingNumber;
+    if (!trackingNumber) {
+      throw new Error('No tracking number provided by Shippo');
+    }
+    
+    // Generate tracking URL
+    let trackingUrl = transaction.trackingUrlProvider;
+    if (!trackingUrl && trackingNumber) {
+      const carrier = (typeof transaction.rate === 'object' ? transaction.rate?.provider : '') || '';
+      
+      switch (carrier?.toLowerCase()) {
+        case 'usps':
+          trackingUrl = `https://tools.usps.com/go/TrackConfirmAction?qtc_tLabels1=${trackingNumber}`;
+          break;
+        case 'ups':
+          trackingUrl = `https://www.ups.com/track?track=yes&trackNums=${trackingNumber}`;
+          break;
+        case 'fedex':
+          trackingUrl = `https://www.fedex.com/fedextrack/?trknbr=${trackingNumber}`;
+          break;
+        default:
+          trackingUrl = `https://goshippo.com/track/${trackingNumber}`;
+      }
+    }
+    
+    if (!trackingUrl) {
+      trackingUrl = `https://goshippo.com/track/${trackingNumber}`;
+    }
+    
+    const labelUrl = transaction.labelUrl || `https://goshippo.com/label/${transaction.objectId || 'unknown'}`;
+
+    // Extract carrier and service information
+    const carrier = selectedRateData?.carrier || 
+                    (typeof transaction.rate === 'object' ? transaction.rate?.provider : '') || 
+                    'Unknown';
+    const service = selectedRateData?.serviceName || 
+                    (typeof transaction.rate === 'object' ? transaction.rate?.servicelevelName : '') || 
+                    'Standard';
+    const cost = selectedRateData?.amount || 
+                 (typeof transaction.rate === 'object' ? parseFloat(transaction.rate?.amount || '0') : 0) || 
+                 0;
+
+    console.log('📦 Shipment details:', {
+      carrier,
+      service,
+      cost,
+      trackingNumber,
+    });
+
+    // Update order with shipment data
+    await prisma.order.update({
+      where: { id: shipmentData.orderId },
+      data: {
+        shipmentId: transaction.objectId,
+        trackingNumber: trackingNumber,
+        trackingUrl: trackingUrl,
+        shippingLabelUrl: labelUrl,
+        shippingCarrier: carrier,
+        shippingService: service,
+        shippingCost: cost,
+      },
+    });
+
+      return {
+      shipmentId: transaction.objectId,
+      trackingNumber: trackingNumber,
+      trackingUrl: trackingUrl,
+      labelUrl: labelUrl,
+      status: 'label_created',
+    };
+  } catch (error: any) {
+    console.error('❌ Shipment creation error:', error?.message || error);
+    throw new Error('Failed to create shipment');
   }
+};
 
-  /**
-   * Create notification for shipment status changes
-   */
-  private static async createStatusNotification(
-    userId: string, 
-    orderId: string, 
-    status: ShipmentStatus
-  ): Promise<void> {
-    let title = '';
-    let message = '';
+// Get shipment status
+export const getShipmentStatus = async (shipmentId: string) => {
+  try {
+    const shippo = getShippoClient();
+    
+    const transaction = await shippo.transactions.get(shipmentId);
 
-    switch (status) {
-      case 'SHIPPED':
-        title = 'Order Shipped';
-        message = 'Your order has been shipped and is on its way!';
+      return {
+      status: transaction.status,
+      trackingNumber: transaction.trackingNumber,
+      trackingUrl: transaction.trackingUrlProvider,
+      labelUrl: transaction.labelUrl,
+      carrier: typeof transaction.rate === 'object' ? transaction.rate?.provider || '' : '',
+      service: typeof transaction.rate === 'object' ? transaction.rate?.servicelevelName || '' : '',
+      };
+    } catch (error) {
+    console.error('Shipment status error:', error);
+    throw new Error('Failed to get shipment status');
+  }
+};
+
+// Handle webhook events
+export const handleWebhookEvent = async (eventType: string, data: any) => {
+  try {
+    console.log(`📦 Shippo webhook received: ${eventType}`, data);
+    
+    switch (eventType) {
+      case 'transaction.created':
+        await handleTransactionCreated(data);
         break;
-      case 'IN_TRANSIT':
-        title = 'Order In Transit';
-        message = 'Your order is currently in transit to your location.';
+      case 'transaction.updated':
+        await handleTransactionUpdated(data);
         break;
-      case 'OUT_FOR_DELIVERY':
-        title = 'Out for Delivery';
-        message = 'Your order is out for delivery and will arrive today!';
-        break;
-      case 'DELIVERED':
-        title = 'Order Delivered';
-        message = 'Your order has been delivered successfully!';
-        break;
-      case 'EXCEPTION':
-        title = 'Delivery Exception';
-        message = 'There was an issue with your delivery. Please contact support.';
+      case 'track.updated':
+        await handleTrackUpdated(data);
         break;
       default:
-        title = 'Shipment Update';
-        message = 'Your shipment status has been updated.';
+        console.log(`Unhandled webhook event: ${eventType}`);
     }
-
-    await prisma.notification.create({
-      data: {
-        userId,
-        title,
-        message,
-        type: 'SHIPMENT',
-        relatedId: orderId
-      }
-    });
-  }
-
-  /**
-   * Get shipment analytics
-   */
-  static async getShipmentAnalytics(): Promise<any> {
-    try {
-      const [
-        totalShipments,
-        statusCounts,
-        carrierCounts,
-        avgDeliveryTime
-      ] = await Promise.all([
-        prisma.shipment.count(),
-        prisma.shipment.groupBy({
-          by: ['status'],
-          _count: { status: true }
-        }),
-        prisma.shipment.groupBy({
-          by: ['carrier'],
-          _count: { carrier: true }
-        }),
-        prisma.shipment.aggregate({
-          _avg: {
-            // Calculate average delivery time
-          }
-        })
-      ]);
-
-      return {
-        totalShipments,
-        statusBreakdown: statusCounts,
-        carrierBreakdown: carrierCounts,
-        avgDeliveryTime: avgDeliveryTime._avg
-      };
     } catch (error) {
-      console.error('Error getting shipment analytics:', error);
+    console.error('Webhook handling error:', error);
       throw error;
-    }
   }
-}
+};
+
+const handleTransactionCreated = async (data: any) => {
+  // Transaction created - label is ready
+  await prisma.order.updateMany({
+    where: { shipmentId: data.objectId },
+    data: {
+      updatedAt: new Date(),
+    },
+  });
+};
+
+const handleTransactionUpdated = async (data: any) => {
+  // Transaction updated - status changed
+  await prisma.order.updateMany({
+    where: { shipmentId: data.objectId },
+    data: {
+      updatedAt: new Date(),
+    },
+  });
+};
+
+const handleTrackUpdated = async (data: any) => {
+  // Tracking updated - delivery status changed
+  await prisma.order.updateMany({
+    where: { trackingNumber: data.trackingNumber },
+    data: {
+      updatedAt: new Date(),
+    },
+  });
+};

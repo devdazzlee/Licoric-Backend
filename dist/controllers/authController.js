@@ -8,6 +8,7 @@ const bcryptjs_1 = __importDefault(require("bcryptjs"));
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const client_1 = require("@prisma/client");
 const express_validator_1 = require("express-validator");
+const emailService_1 = require("../services/emailService");
 const prisma = new client_1.PrismaClient();
 const generateAccessToken = (id) => {
     return jsonwebtoken_1.default.sign({ id }, process.env.JWT_SECRET, {
@@ -88,6 +89,11 @@ const register = async (req, res) => {
         const refreshToken = generateRefreshToken(user.id);
         res.cookie('accessToken', accessToken, accessTokenCookieOptions);
         res.cookie('refreshToken', refreshToken, refreshTokenCookieOptions);
+        await (0, emailService_1.sendEmail)({
+            to: user.email,
+            subject: 'Welcome to Licorice Ropes!',
+            html: emailService_1.emailTemplates.welcome(`${user.firstName || 'there'}`)
+        }).catch(err => console.error('Failed to send welcome email:', err));
         res.status(201).json({
             success: true,
             message: 'User registered successfully',

@@ -29,13 +29,6 @@ router.get('/', async (req, res) => {
 
     const flavors = await prisma.flavor.findMany({
       where,
-      include: {
-        _count: {
-          select: {
-            products: true
-          }
-        }
-      },
       orderBy: { createdAt: 'desc' }
     });
 
@@ -60,20 +53,7 @@ router.get('/:id', async (req, res) => {
     const { id } = req.params;
 
     const flavor = await prisma.flavor.findUnique({
-      where: { id },
-      include: {
-        products: {
-          where: { isActive: true },
-          take: 10,
-          select: {
-            id: true,
-            name: true,
-            price: true,
-            image: true,
-            rating: true
-          }
-        }
-      }
+      where: { id }
     });
 
     if (!flavor) {
@@ -103,7 +83,7 @@ router.post('/', auth, adminAuth, flavorValidation, async (req, res) => {
   try {
     const { name, description, color, image, isActive } = req.body;
 
-    // Check if flavor name already exists
+    // Check if flavor already exists
     const existingFlavor = await prisma.flavor.findUnique({
       where: { name }
     });
@@ -205,28 +185,13 @@ router.delete('/:id', auth, adminAuth, async (req, res) => {
     const { id } = req.params;
 
     const flavor = await prisma.flavor.findUnique({
-      where: { id },
-      include: {
-        _count: {
-          select: {
-            products: true
-          }
-        }
-      }
+      where: { id }
     });
 
     if (!flavor) {
       return res.status(404).json({
         success: false,
         message: 'Flavor not found'
-      });
-    }
-
-    // Check if flavor has products
-    if (flavor._count.products > 0) {
-      return res.status(400).json({
-        success: false,
-        message: `Cannot delete flavor. It is currently used by ${flavor._count.products} product(s)`
       });
     }
 
@@ -247,93 +212,8 @@ router.delete('/:id', auth, adminAuth, async (req, res) => {
   }
 });
 
-// @desc    Assign flavor to product (Admin)
-// @route   POST /api/flavors/:flavorId/products/:productId
-// @access  Private/Admin
-router.post('/:flavorId/products/:productId', auth, adminAuth, async (req, res) => {
-  try {
-    const { flavorId, productId } = req.params;
-
-    const flavor = await prisma.flavor.findUnique({
-      where: { id: flavorId }
-    });
-
-    const product = await prisma.product.findUnique({
-      where: { id: productId }
-    });
-
-    if (!flavor) {
-      return res.status(404).json({
-        success: false,
-        message: 'Flavor not found'
-      });
-    }
-
-    if (!product) {
-      return res.status(404).json({
-        success: false,
-        message: 'Product not found'
-      });
-    }
-
-    // Update product to include this flavor
-    const updatedProduct = await prisma.product.update({
-      where: { id: productId },
-      data: {
-        flavors: {
-          connect: { id: flavorId }
-        }
-      },
-      include: {
-        flavors: true
-      }
-    });
-
-    res.json({
-      success: true,
-      message: 'Flavor assigned to product successfully',
-      data: { product: updatedProduct }
-    });
-  } catch (error) {
-    console.error('Assign flavor error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error'
-    });
-  }
-});
-
-// @desc    Remove flavor from product (Admin)
-// @route   DELETE /api/flavors/:flavorId/products/:productId
-// @access  Private/Admin
-router.delete('/:flavorId/products/:productId', auth, adminAuth, async (req, res) => {
-  try {
-    const { flavorId, productId } = req.params;
-
-    const updatedProduct = await prisma.product.update({
-      where: { id: productId },
-      data: {
-        flavors: {
-          disconnect: { id: flavorId }
-        }
-      },
-      include: {
-        flavors: true
-      }
-    });
-
-    res.json({
-      success: true,
-      message: 'Flavor removed from product successfully',
-      data: { product: updatedProduct }
-    });
-  } catch (error) {
-    console.error('Remove flavor error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error'
-    });
-  }
-});
-
 export default router;
+
+
+
+

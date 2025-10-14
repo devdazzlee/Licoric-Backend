@@ -58,6 +58,55 @@ export const auth = async (req: AuthenticatedRequest, res: Response, next: NextF
   }
 };
 
+// Optional auth: doesn't require authentication but sets user if token is valid
+export const optionalAuth = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    // Try to get token from cookie first, then from Authorization header
+    let token = req.cookies?.accessToken;
+    
+    if (!token) {
+      const authHeader = req.header('Authorization');
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        token = authHeader.replace('Bearer ', '');
+      }
+    }
+
+    // If no token, continue as guest
+    if (!token) {
+      next();
+      return;
+    }
+
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET!) as { id: string };
+      
+      const user = await prisma.user.findUnique({
+        where: { id: decoded.id },
+        select: {
+          id: true,
+          email: true,
+          firstName: true,
+          lastName: true,
+          role: true,
+          isActive: true
+        }
+      });
+
+      if (user && user.isActive) {
+        req.user = user;
+      }
+    } catch (error) {
+      // Invalid token, continue as guest
+      console.log('Optional auth: Invalid token, continuing as guest');
+    }
+    
+    next();
+  } catch (error) {
+    console.error('Optional auth middleware error:', error);
+    next();
+  }
+};
+
 export const adminAuth = async (req: AuthenticatedRequest, res: Response, next: NextFunction): Promise<void> => {
   try {
     await auth(req, res, () => {

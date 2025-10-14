@@ -44,6 +44,7 @@ const getProducts = async (req, res) => {
                     images: true,
                     category: true,
                     brand: true,
+                    sku: true,
                     rating: true,
                     reviewCount: true,
                     sales: true,
@@ -224,6 +225,7 @@ const getProductsByCategory = async (req, res) => {
                     image: true,
                     category: true,
                     brand: true,
+                    sku: true,
                     rating: true,
                     reviewCount: true,
                     sales: true,
@@ -264,8 +266,11 @@ const getProductsByCategory = async (req, res) => {
 exports.getProductsByCategory = getProductsByCategory;
 const createProduct = async (req, res) => {
     try {
-        const { name, description, shortDescription, price, originalPrice, discount, category, brand, weight, ingredients, allergens, nutritionFacts, stock, sku } = req.body;
-        let image = null;
+        console.log('🔍 Create product request body:', req.body);
+        console.log('📸 Image from request:', req.body.image);
+        const { name, description, shortDescription, price, originalPrice, discount, category, brand, weight, ingredients, allergens, nutritionFacts, stock, sku, image: imageFromBody } = req.body;
+        let image = imageFromBody || null;
+        console.log('🖼️ Image value to use:', image);
         let images = [];
         if (req.file) {
             image = await (0, cloudinary_1.uploadToCloudinary)(req.file);
@@ -279,6 +284,8 @@ const createProduct = async (req, res) => {
                 image = images[0];
             }
         }
+        const finalImage = image || '';
+        console.log('✨ Final image value for database:', finalImage);
         const product = await prisma.product.create({
             data: {
                 name,
@@ -287,7 +294,7 @@ const createProduct = async (req, res) => {
                 price: parseFloat(price),
                 originalPrice: originalPrice ? parseFloat(originalPrice) : null,
                 discount: discount ? parseInt(discount) : null,
-                image: image || '',
+                image: finalImage,
                 images,
                 category,
                 brand,
@@ -299,6 +306,7 @@ const createProduct = async (req, res) => {
                 sku
             }
         });
+        console.log('✅ Product created with image:', product.image);
         res.status(201).json({
             success: true,
             message: 'Product created successfully',
@@ -327,7 +335,7 @@ const updateProduct = async (req, res) => {
             });
             return;
         }
-        let image = existingProduct.image;
+        let image = req.body.image || existingProduct.image;
         let images = existingProduct.images || [];
         if (req.file) {
             image = await (0, cloudinary_1.uploadToCloudinary)(req.file);

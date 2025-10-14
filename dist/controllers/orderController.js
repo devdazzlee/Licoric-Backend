@@ -2,30 +2,70 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.updateOrderStatus = exports.getOrders = exports.getOrder = exports.getUserOrders = exports.createOrder = void 0;
 const client_1 = require("@prisma/client");
+const emailService_1 = require("../services/emailService");
 const prisma = new client_1.PrismaClient();
 const createOrder = async (req, res) => {
     try {
-        const { shippingFirstName, shippingLastName, shippingAddress, shippingCity, shippingState, shippingZipCode, shippingCountry, shippingPhone, paymentMethod, notes } = req.body;
-        const cartItems = await prisma.cartItem.findMany({
-            where: { userId: req.user.id },
-            include: {
-                product: {
-                    select: {
-                        id: true,
-                        name: true,
-                        price: true,
-                        stock: true,
-                        isActive: true
+        const { shippingFirstName, shippingLastName, shippingAddress, shippingCity, shippingState, shippingZipCode, shippingCountry, shippingPhone, paymentMethod, notes, guestEmail, items } = req.body;
+        const isGuest = !req.user;
+        let cartItems = [];
+        if (isGuest) {
+            if (!items || items.length === 0) {
+                res.status(400).json({
+                    success: false,
+                    message: 'Cart is empty'
+                });
+                return;
+            }
+            if (!guestEmail) {
+                res.status(400).json({
+                    success: false,
+                    message: 'Email is required for guest checkout'
+                });
+                return;
+            }
+            const productIds = items.map((item) => item.productId);
+            const products = await prisma.product.findMany({
+                where: { id: { in: productIds } },
+                select: {
+                    id: true,
+                    name: true,
+                    price: true,
+                    stock: true,
+                    isActive: true
+                }
+            });
+            cartItems = items.map((item) => {
+                const product = products.find(p => p.id === item.productId);
+                return {
+                    productId: item.productId,
+                    quantity: item.quantity,
+                    product
+                };
+            });
+        }
+        else {
+            cartItems = await prisma.cartItem.findMany({
+                where: { userId: req.user.id },
+                include: {
+                    product: {
+                        select: {
+                            id: true,
+                            name: true,
+                            price: true,
+                            stock: true,
+                            isActive: true
+                        }
                     }
                 }
-            }
-        });
-        if (cartItems.length === 0) {
-            res.status(400).json({
-                success: false,
-                message: 'Cart is empty'
             });
-            return;
+            if (cartItems.length === 0) {
+                res.status(400).json({
+                    success: false,
+                    message: 'Cart is empty'
+                });
+                return;
+            }
         }
         for (const item of cartItems) {
             if (!item.product.isActive) {
@@ -55,7 +95,8 @@ const createOrder = async (req, res) => {
             const order = await tx.order.create({
                 data: {
                     orderNumber,
-                    userId: req.user.id,
+                    userId: isGuest ? null : req.user.id,
+                    guestEmail: isGuest ? guestEmail : null,
                     totalAmount,
                     shippingAmount,
                     taxAmount,
@@ -94,9 +135,11 @@ const createOrder = async (req, res) => {
                     }
                 });
             }
-            await tx.cartItem.deleteMany({
-                where: { userId: req.user.id }
-            });
+            if (!isGuest) {
+                await tx.cartItem.deleteMany({
+                    where: { userId: req.user.id }
+                });
+            }
             return { order, orderItems };
         });
         const completeOrder = await prisma.order.findUnique({
@@ -123,6 +166,39 @@ const createOrder = async (req, res) => {
                 }
             }
         });
+        if (completeOrder) {
+            const customerEmail = isGuest ? guestEmail : completeOrder.user?.email;
+            const customerName = isGuest
+                ? `${shippingFirstName} ${shippingLastName}`
+                : `${completeOrder.user?.firstName} ${completeOrder.user?.lastName}`;
+            if (customerEmail) {
+                await (0, emailService_1.sendEmail)({
+                    to: customerEmail,
+                    subject: `Order Confirmation - #${completeOrder.orderNumber}`,
+                    html: emailService_1.emailTemplates.orderConfirmation({
+                        customerName,
+                        orderNumber: completeOrder.orderNumber,
+                        orderDate: new Date(completeOrder.createdAt).toLocaleDateString(),
+                        status: completeOrder.status,
+                        items: completeOrder.orderItems.map(item => ({
+                            name: item.product.name,
+                            quantity: item.quantity,
+                            price: Number(item.price).toFixed(2)
+                        })),
+                        total: Number(completeOrder.totalAmount).toFixed(2),
+                        orderId: completeOrder.id,
+                        shippingAddress: {
+                            firstName: completeOrder.shippingFirstName,
+                            lastName: completeOrder.shippingLastName,
+                            address: completeOrder.shippingAddress,
+                            city: completeOrder.shippingCity,
+                            state: completeOrder.shippingState,
+                            zipCode: completeOrder.shippingZipCode
+                        }
+                    })
+                }).catch(err => console.error('Failed to send order email:', err));
+            }
+        }
         res.status(201).json({
             success: true,
             message: 'Order created successfully',
@@ -227,12 +303,23 @@ const getOrder = async (req, res) => {
             });
             return;
         }
-        if (order.userId !== req.user.id && req.user.role !== 'ADMIN') {
-            res.status(403).json({
-                success: false,
-                message: 'Access denied'
-            });
-            return;
+        if (req.user) {
+            if (order.userId !== req.user.id && req.user.role !== 'ADMIN') {
+                res.status(403).json({
+                    success: false,
+                    message: 'Access denied'
+                });
+                return;
+            }
+        }
+        else {
+            if (order.userId) {
+                res.status(403).json({
+                    success: false,
+                    message: 'Access denied'
+                });
+                return;
+            }
         }
         res.json({
             success: true,

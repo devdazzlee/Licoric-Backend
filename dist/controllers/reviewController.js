@@ -126,7 +126,8 @@ const getReviews = async (req, res) => {
 exports.getReviews = getReviews;
 const createReview = async (req, res) => {
     try {
-        const { productId, rating, title, comment } = req.body;
+        const { productId, rating, title, comment, guestName, guestEmail } = req.body;
+        const userId = req.user?.id;
         const product = await prisma.product.findUnique({
             where: { id: productId }
         });
@@ -137,37 +138,44 @@ const createReview = async (req, res) => {
             });
             return;
         }
-        const existingReview = await prisma.review.findUnique({
-            where: {
-                userId_productId: {
-                    userId: req.user.id,
+        if (userId) {
+            const existingReview = await prisma.review.findFirst({
+                where: {
+                    userId: userId,
                     productId: productId
                 }
-            }
-        });
-        if (existingReview) {
-            res.status(400).json({
-                success: false,
-                message: 'You have already reviewed this product'
             });
-            return;
+            if (existingReview) {
+                res.status(400).json({
+                    success: false,
+                    message: 'You have already reviewed this product'
+                });
+                return;
+            }
+        }
+        const reviewData = {
+            productId,
+            rating: parseInt(rating),
+            title: title || null,
+            comment,
+            isVerified: userId ? true : false,
+        };
+        if (userId) {
+            reviewData.userId = userId;
+        }
+        else {
+            reviewData.guestName = guestName || 'Anonymous';
+            reviewData.guestEmail = guestEmail || null;
         }
         const review = await prisma.review.create({
-            data: {
-                userId: req.user.id,
-                productId,
-                rating: parseInt(rating),
-                title: title || null,
-                comment,
-                isVerified: true
-            },
+            data: reviewData,
             include: {
-                user: {
+                user: userId ? {
                     select: {
                         firstName: true,
                         lastName: true
                     }
-                }
+                } : undefined
             }
         });
         const productReviews = await prisma.review.findMany({

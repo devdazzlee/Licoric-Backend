@@ -77,3 +77,7 @@ export const deleteFromCloudinary = async (publicId: string): Promise<any> => {
 };
 
 export { cloudinary };
+
+
+
+

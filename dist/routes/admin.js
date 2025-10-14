@@ -550,5 +550,237 @@ router.get('/audit-logs', async (req, res) => {
         });
     }
 });
+router.put('/orders/:id/status', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { status } = req.body;
+        if (!status) {
+            return res.status(400).json({
+                success: false,
+                message: 'Status is required'
+            });
+        }
+        const order = await prisma.order.findUnique({
+            where: { id }
+        });
+        if (!order) {
+            return res.status(404).json({
+                success: false,
+                message: 'Order not found'
+            });
+        }
+        const updatedOrder = await prisma.order.update({
+            where: { id },
+            data: { status }
+        });
+        res.json({
+            success: true,
+            message: 'Order status updated successfully',
+            data: { order: updatedOrder }
+        });
+    }
+    catch (error) {
+        console.error('Update order status error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Server error'
+        });
+    }
+});
+router.delete('/orders/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const order = await prisma.order.findUnique({
+            where: { id }
+        });
+        if (!order) {
+            return res.status(404).json({
+                success: false,
+                message: 'Order not found'
+            });
+        }
+        await prisma.order.delete({
+            where: { id }
+        });
+        res.json({
+            success: true,
+            message: 'Order deleted successfully'
+        });
+    }
+    catch (error) {
+        console.error('Delete order error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Server error'
+        });
+    }
+});
+router.put('/reviews/:id/moderate', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { isActive, isVerified } = req.body;
+        const review = await prisma.review.findUnique({
+            where: { id }
+        });
+        if (!review) {
+            return res.status(404).json({
+                success: false,
+                message: 'Review not found'
+            });
+        }
+        const updatedReview = await prisma.review.update({
+            where: { id },
+            data: {
+                ...(isActive !== undefined && { isActive }),
+                ...(isVerified !== undefined && { isVerified })
+            }
+        });
+        res.json({
+            success: true,
+            message: 'Review moderated successfully',
+            data: { review: updatedReview }
+        });
+    }
+    catch (error) {
+        console.error('Moderate review error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Server error'
+        });
+    }
+});
+router.delete('/reviews/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const review = await prisma.review.findUnique({
+            where: { id }
+        });
+        if (!review) {
+            return res.status(404).json({
+                success: false,
+                message: 'Review not found'
+            });
+        }
+        await prisma.review.delete({
+            where: { id }
+        });
+        res.json({
+            success: true,
+            message: 'Review deleted successfully'
+        });
+    }
+    catch (error) {
+        console.error('Delete review error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Server error'
+        });
+    }
+});
+router.put('/users/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { role, isActive } = req.body;
+        const user = await prisma.user.findUnique({
+            where: { id }
+        });
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                message: 'User not found'
+            });
+        }
+        const updatedUser = await prisma.user.update({
+            where: { id },
+            data: {
+                ...(role && { role }),
+                ...(isActive !== undefined && { isActive })
+            },
+            select: {
+                id: true,
+                email: true,
+                firstName: true,
+                lastName: true,
+                role: true,
+                isActive: true,
+                createdAt: true
+            }
+        });
+        res.json({
+            success: true,
+            message: 'User updated successfully',
+            data: { user: updatedUser }
+        });
+    }
+    catch (error) {
+        console.error('Update user error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Server error'
+        });
+    }
+});
+router.delete('/users/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const user = await prisma.user.findUnique({
+            where: { id }
+        });
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                message: 'User not found'
+            });
+        }
+        if (user.role === 'ADMIN') {
+            return res.status(403).json({
+                success: false,
+                message: 'Cannot delete admin users'
+            });
+        }
+        await prisma.user.delete({
+            where: { id }
+        });
+        res.json({
+            success: true,
+            message: 'User deleted successfully'
+        });
+    }
+    catch (error) {
+        console.error('Delete user error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Server error'
+        });
+    }
+});
+router.delete('/products/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const product = await prisma.product.findUnique({
+            where: { id }
+        });
+        if (!product) {
+            return res.status(404).json({
+                success: false,
+                message: 'Product not found'
+            });
+        }
+        await prisma.product.delete({
+            where: { id }
+        });
+        res.json({
+            success: true,
+            message: 'Product deleted successfully'
+        });
+    }
+    catch (error) {
+        console.error('Delete product error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Server error'
+        });
+    }
+});
 exports.default = router;
 //# sourceMappingURL=admin.js.map

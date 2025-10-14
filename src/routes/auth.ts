@@ -35,3 +35,7 @@ router.put('/profile', auth, updateProfile);
 router.put('/change-password', auth, changePasswordValidation, changePassword);
 
 export default router;
+
+
+
+

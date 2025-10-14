@@ -342,3 +342,7 @@ export const clearCart = async (req: AuthenticatedRequest, res: Response): Promi
     });
   }
 };
+
+
+
+

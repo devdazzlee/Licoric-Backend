@@ -16,5 +16,6 @@ const contactValidation = [
 router.post('/', contactValidation, contactController_1.createContactMessage);
 router.get('/', auth_1.auth, auth_1.adminAuth, contactController_1.getContactMessages);
 router.put('/:id', auth_1.auth, auth_1.adminAuth, contactController_1.updateContactMessage);
+router.delete('/:id', auth_1.auth, auth_1.adminAuth, contactController_1.deleteContactMessage);
 exports.default = router;
 //# sourceMappingURL=contact.js.map

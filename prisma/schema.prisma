@@ -55,6 +55,7 @@ model Product {
   images       String[] // Array of image URLs
   category     String
   brand        String?
+  flavors      String[] // Array of flavor names (e.g., ["Strawberry", "Cherry", "Grape"])
   weight       String?
   ingredients  String?
   allergens    String?
@@ -74,7 +75,6 @@ model Product {
   reviews      Review[]
   favorites    Favorite[]
   inventoryLogs InventoryLog[]
-  flavors      Flavor[]
 
   @@map("products")
 }
@@ -125,7 +125,8 @@ model Favorite {
 model Order {
   id              String      @id @default(cuid())
   orderNumber     String      @unique
-  userId          String
+  userId          String?     // Optional for guest checkout
+  guestEmail      String?     // Email for guest users
   status          OrderStatus @default(PENDING)
   totalAmount     Decimal     @db.Decimal(10, 2)
   shippingAmount  Decimal     @default(0) @db.Decimal(10, 2)
@@ -133,40 +134,55 @@ model Order {
   discountAmount  Decimal     @default(0) @db.Decimal(10, 2)
   
   // Shipping Information
-  shippingFirstName String
-  shippingLastName  String
-  shippingAddress   String
-  shippingCity      String
-  shippingState     String
-  shippingZipCode   String
-  shippingCountry   String
+  shippingFirstName String?
+  shippingLastName  String?
+  shippingAddress   String?
+  shippingStreet    String?     // Added for compatibility
+  shippingCity      String?
+  shippingState     String?
+  shippingZipCode   String?
+  shippingZip       String?     // Added for compatibility
+  shippingCountry   String?
   shippingPhone     String?
+  
+  // Shippo Integration Fields
+  shipmentId       String?      // Shippo shipment ID
+  trackingNumber   String?      // Tracking number
+  trackingUrl      String?      // Tracking URL
+  shippingLabelUrl String?      // Shipping label URL
+  shippingCarrier  String?      // Carrier (USPS, UPS, FedEx, etc.)
+  shippingService  String?      // Service level (Priority, Ground, etc.)
+  shippingCost     Decimal?     @db.Decimal(10, 2) // Actual shipping cost
   
   // Payment Information
   paymentMethod    String?
   paymentStatus    PaymentStatus @default(PENDING)
   paymentId        String?
   
-  notes            String?
+  orderNotes       String?      // Order notes
+  notes            String?      // Additional notes
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
   // Relations
-  user       User        @relation(fields: [userId], references: [id])
-  orderItems OrderItem[]
-  payment    Payment?
-  shipment   Shipment?
+  user          User?          @relation(fields: [userId], references: [id])
+  orderItems    OrderItem[]
+  payment       Payment?
+  shipment      Shipment?
+  returnRequest ReturnRequest?
 
   @@map("orders")
 }
 
 model OrderItem {
-  id        String  @id @default(cuid())
-  orderId   String
-  productId String
-  quantity  Int
-  price     Decimal @db.Decimal(10, 2)
-  createdAt DateTime @default(now())
+  id          String  @id @default(cuid())
+  orderId     String
+  productId   String
+  productName String?   // Product name at time of order
+  quantity    Int
+  price       Decimal @db.Decimal(10, 2)
+  total       Decimal? @db.Decimal(10, 2) // Total for this line item
+  createdAt   DateTime @default(now())
 
   // Relations
   order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
@@ -176,22 +192,23 @@ model OrderItem {
 }
 
 model Review {
-  id        String   @id @default(cuid())
-  userId    String
-  productId String
-  rating    Int      // 1-5 stars
-  title     String?
-  comment   String
-  isVerified Boolean @default(false)
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id         String   @id @default(cuid())
+  userId     String?  // Optional for anonymous reviews
+  productId  String
+  rating     Int      // 1-5 stars
+  title      String?
+  comment    String
+  guestName  String?  // Name for anonymous reviews
+  guestEmail String?  // Email for anonymous reviews
+  isVerified Boolean  @default(false)
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
   // Relations
-  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  user    User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
 
-  @@unique([userId, productId])
   @@map("reviews")
 }
 
@@ -331,22 +348,6 @@ model AuditLog {
   @@map("audit_logs")
 }
 
-model Flavor {
-  id          String    @id @default(cuid())
-  name        String    @unique
-  description String?
-  color       String?   // Hex color code for UI display
-  image       String?   // Image URL
-  isActive    Boolean   @default(true)
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-
-  // Relations
-  products    Product[]
-
-  @@map("flavors")
-}
-
 model Address {
   id          String   @id @default(cuid())
   userId      String
@@ -367,6 +368,41 @@ model Address {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("addresses")
+}
+
+model Flavor {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  color       String?  // Hex color for UI display
+  image       String?  // Flavor image URL
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("flavors")
+}
+
+model ReturnRequest {
+  id            String       @id @default(cuid())
+  orderId       String       @unique
+  userId        String
+  reason        String       // Reason for return
+  description   String?      // Detailed description
+  status        ReturnStatus @default(PENDING)
+  refundAmount  Decimal      @db.Decimal(10, 2)
+  refundMethod  String?      // original_payment, store_credit
+  images        String[]     // Photos of items to return
+  adminNotes    String?      // Internal admin notes
+  processedBy   String?      // Admin user ID who processed
+  processedAt   DateTime?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  // Relations
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@map("return_requests")
 }
 
 // Enums
@@ -427,4 +463,13 @@ enum DiscountType {
   PERCENTAGE
   FIXED_AMOUNT
   FREE_SHIPPING
+}
+
+enum ReturnStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  PROCESSING
+  COMPLETED
+  CANCELLED
 }

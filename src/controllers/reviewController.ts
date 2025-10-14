@@ -139,10 +139,11 @@ export const getReviews = async (req: Request, res: Response): Promise<void> => 
 
 // @desc    Create review
 // @route   POST /api/reviews
-// @access  Private
+// @access  Public (supports both authenticated and anonymous)
 export const createReview = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
-    const { productId, rating, title, comment } = req.body;
+    const { productId, rating, title, comment, guestName, guestEmail } = req.body;
+    const userId = req.user?.id;
 
     // Check if product exists
     const product = await prisma.product.findUnique({
@@ -157,41 +158,50 @@ export const createReview = async (req: AuthenticatedRequest, res: Response): Pr
       return;
     }
 
-    // Check if user already reviewed this product
-    const existingReview = await prisma.review.findUnique({
-      where: {
-        userId_productId: {
-          userId: req.user!.id,
+    // For authenticated users, check if they already reviewed this product
+    if (userId) {
+      const existingReview = await prisma.review.findFirst({
+        where: {
+          userId: userId,
           productId: productId
         }
-      }
-    });
-
-    if (existingReview) {
-      res.status(400).json({
-        success: false,
-        message: 'You have already reviewed this product'
       });
-      return;
+
+      if (existingReview) {
+        res.status(400).json({
+          success: false,
+          message: 'You have already reviewed this product'
+        });
+        return;
+      }
     }
 
-    // Create review
+    // Create review (authenticated or anonymous)
+    const reviewData: any = {
+      productId,
+      rating: parseInt(rating),
+      title: title || null,
+      comment,
+      isVerified: userId ? true : false, // Verified only if authenticated
+    };
+
+    // Add user ID if authenticated, otherwise add guest info
+    if (userId) {
+      reviewData.userId = userId;
+    } else {
+      reviewData.guestName = guestName || 'Anonymous';
+      reviewData.guestEmail = guestEmail || null;
+    }
+
     const review = await prisma.review.create({
-      data: {
-        userId: req.user!.id,
-        productId,
-        rating: parseInt(rating),
-        title: title || null,
-        comment,
-        isVerified: true
-      },
+      data: reviewData,
       include: {
-        user: {
+        user: userId ? {
           select: {
             firstName: true,
             lastName: true
           }
-        }
+        } : undefined
       }
     });
 
@@ -389,3 +399,5 @@ export const deleteReview = async (req: AuthenticatedRequest, res: Response): Pr
     });
   }
 };
+
+

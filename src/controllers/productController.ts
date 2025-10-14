@@ -50,6 +50,7 @@ export const getProducts = async (req: Request, res: Response): Promise<void> =>
           images: true,
           category: true,
           brand: true,
+          sku: true,
           rating: true,
           reviewCount: true,
           sales: true,
@@ -246,6 +247,7 @@ export const getProductsByCategory = async (req: Request, res: Response): Promis
           image: true,
           category: true,
           brand: true,
+          sku: true,
           rating: true,
           reviewCount: true,
           sales: true,
@@ -290,6 +292,9 @@ export const getProductsByCategory = async (req: Request, res: Response): Promis
 // @access  Private/Admin
 export const createProduct = async (req: Request, res: Response): Promise<void> => {
   try {
+    console.log('🔍 Create product request body:', req.body);
+    console.log('📸 Image from request:', req.body.image);
+    
     const {
       name,
       description,
@@ -304,13 +309,16 @@ export const createProduct = async (req: Request, res: Response): Promise<void> 
       allergens,
       nutritionFacts,
       stock,
-      sku
+      sku,
+      image: imageFromBody
     } = req.body;
 
-    let image = null;
+    let image = imageFromBody || null; // Use image URL from body if provided
+    console.log('🖼️ Image value to use:', image);
+    
     let images: string[] = [];
 
-    // Handle single image upload
+    // Handle single image upload (if file is provided directly)
     if ((req as any).file) {
       image = await uploadToCloudinary((req as any).file);
     }
@@ -326,6 +334,9 @@ export const createProduct = async (req: Request, res: Response): Promise<void> 
       }
     }
 
+    const finalImage = image || '';
+    console.log('✨ Final image value for database:', finalImage);
+
     const product = await prisma.product.create({
       data: {
         name,
@@ -334,7 +345,7 @@ export const createProduct = async (req: Request, res: Response): Promise<void> 
         price: parseFloat(price),
         originalPrice: originalPrice ? parseFloat(originalPrice) : null,
         discount: discount ? parseInt(discount) : null,
-        image: image || '',
+        image: finalImage,
         images,
         category,
         brand,
@@ -346,6 +357,8 @@ export const createProduct = async (req: Request, res: Response): Promise<void> 
         sku
       }
     });
+
+    console.log('✅ Product created with image:', product.image);
 
     res.status(201).json({
       success: true,
@@ -396,10 +409,10 @@ export const updateProduct = async (req: Request, res: Response): Promise<void> 
       return;
     }
 
-    let image = existingProduct.image;
+    let image = req.body.image || existingProduct.image; // Use image URL from body if provided
     let images = existingProduct.images || [];
 
-    // Handle single image upload
+    // Handle single image upload (if file is provided directly)
     if ((req as any).file) {
       image = await uploadToCloudinary((req as any).file);
     }
@@ -486,3 +499,5 @@ export const deleteProduct = async (req: Request, res: Response): Promise<void> 
     });
   }
 };
+
+

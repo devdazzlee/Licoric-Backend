@@ -4,6 +4,7 @@ import { PrismaClient } from '@prisma/client';
 import { validationResult } from 'express-validator';
 import { Request, Response } from 'express';
 import { AuthenticatedRequest } from '../types';
+import { sendEmail, emailTemplates } from '../services/emailService';
 
 const prisma = new PrismaClient();
 
@@ -107,6 +108,13 @@ export const register = async (req: Request, res: Response): Promise<void> => {
     // Set cookies
     res.cookie('accessToken', accessToken, accessTokenCookieOptions);
     res.cookie('refreshToken', refreshToken, refreshTokenCookieOptions);
+
+    // Send welcome email
+    await sendEmail({
+      to: user.email,
+      subject: 'Welcome to Licorice Ropes!',
+      html: emailTemplates.welcome(`${user.firstName || 'there'}`)
+    }).catch(err => console.error('Failed to send welcome email:', err));
 
     res.status(201).json({
       success: true,

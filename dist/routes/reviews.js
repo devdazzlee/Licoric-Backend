@@ -15,7 +15,7 @@ const reviewValidation = [
 ];
 router.get('/product/:productId', reviewController_1.getProductReviews);
 router.get('/', reviewController_1.getReviews);
-router.post('/', auth_1.auth, reviewValidation, reviewController_1.createReview);
+router.post('/', auth_1.optionalAuth, reviewValidation, reviewController_1.createReview);
 router.put('/:id', auth_1.auth, reviewValidation, reviewController_1.updateReview);
 router.delete('/:id', auth_1.auth, reviewController_1.deleteReview);
 exports.default = router;

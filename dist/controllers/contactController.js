@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.updateContactMessage = exports.createContactMessage = exports.getContactMessages = void 0;
+exports.deleteContactMessage = exports.updateContactMessage = exports.createContactMessage = exports.getContactMessages = void 0;
 const client_1 = require("@prisma/client");
 const prisma = new client_1.PrismaClient();
 const getContactMessages = async (req, res) => {
@@ -105,4 +105,33 @@ const updateContactMessage = async (req, res) => {
     }
 };
 exports.updateContactMessage = updateContactMessage;
+const deleteContactMessage = async (req, res) => {
+    try {
+        const message = await prisma.contactMessage.findUnique({
+            where: { id: req.params.id }
+        });
+        if (!message) {
+            res.status(404).json({
+                success: false,
+                message: 'Message not found'
+            });
+            return;
+        }
+        await prisma.contactMessage.delete({
+            where: { id: req.params.id }
+        });
+        res.json({
+            success: true,
+            message: 'Message deleted successfully'
+        });
+    }
+    catch (error) {
+        console.error('Delete contact message error:', error);
+        res.status(500).json({
+            success: false,
+            message: 'Server error'
+        });
+    }
+};
+exports.deleteContactMessage = deleteContactMessage;
 //# sourceMappingURL=contactController.js.map

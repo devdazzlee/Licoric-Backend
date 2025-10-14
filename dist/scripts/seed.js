@@ -250,6 +250,79 @@ const seedData = async () => {
                     reviewCount: 22,
                     sales: 110
                 }
+            }),
+            prisma.product.create({
+                data: {
+                    name: 'Classic Black Licorice Ropes',
+                    description: 'Authentic traditional black licorice made with real licorice extract. For true licorice enthusiasts who appreciate the classic, rich flavor.',
+                    shortDescription: 'Authentic traditional black licorice',
+                    price: 5.99,
+                    originalPrice: 8.99,
+                    discount: 33,
+                    image: 'https://images.unsplash.com/photo-1582058091505-f87a2e55a40f?w=500',
+                    images: [
+                        'https://images.unsplash.com/photo-1582058091505-f87a2e55a40f?w=500',
+                        'https://images.unsplash.com/photo-1578662996442-48f60103fc96?w=500'
+                    ],
+                    category: 'Classic',
+                    brand: 'Southern Sweet',
+                    weight: '80g',
+                    ingredients: 'Corn Syrup, Wheat flour, sugar, modified corn starch, Licorice extract (5%), palm and coconut oil, salt, glycerin, mono and diglycerides, natural flavors',
+                    allergens: 'Contains: Wheat (gluten). May contain traces of Soy.',
+                    nutritionFacts: {
+                        servingsPerContainer: '3 Servings per container',
+                        servingSize: '1/3 Pieces (27g)',
+                        amountPerServing: 'Amount per serving',
+                        calories: 95,
+                        totalFat: 0.3,
+                        sodium: 25,
+                        totalCarbohydrate: 20,
+                        totalSugars: 11,
+                        addedSugars: 11,
+                        protein: 13
+                    },
+                    stock: 110,
+                    sku: 'LR-BL-006',
+                    rating: 4.9,
+                    reviewCount: 45,
+                    sales: 280
+                }
+            }),
+            prisma.product.create({
+                data: {
+                    name: 'Strawberry Cream Licorice Ropes',
+                    description: 'Indulge in the delicious combination of sweet strawberry and creamy goodness. Perfect for those who love fruity and creamy flavors together.',
+                    shortDescription: 'Sweet strawberry with creamy center',
+                    price: 6.49,
+                    originalPrice: 8.99,
+                    discount: 28,
+                    image: 'https://images.unsplash.com/photo-1578662996442-48f60103fc96?w=500',
+                    images: [
+                        'https://images.unsplash.com/photo-1578662996442-48f60103fc96?w=500'
+                    ],
+                    category: 'Sweet',
+                    brand: 'Southern Sweet',
+                    weight: '80g',
+                    ingredients: 'Corn Syrup, Wheat flour, sugar, modified corn starch, cream powder, Licorice extract, palm and coconut oil, salt, glycerin, mono and diglycerides, artificial flavors, colors: Red 40',
+                    allergens: 'Contains: Wheat (gluten), Milk. May contain traces of Soy.',
+                    nutritionFacts: {
+                        servingsPerContainer: '3 Servings per container',
+                        servingSize: '1/3 Pieces (27g)',
+                        amountPerServing: 'Amount per serving',
+                        calories: 108,
+                        totalFat: 0.5,
+                        sodium: 22,
+                        totalCarbohydrate: 23,
+                        totalSugars: 14,
+                        addedSugars: 14,
+                        protein: 12
+                    },
+                    stock: 65,
+                    sku: 'LR-SC-007',
+                    rating: 4.7,
+                    reviewCount: 38,
+                    sales: 165
+                }
             })
         ]);
         console.log('🍭 Created sample products');

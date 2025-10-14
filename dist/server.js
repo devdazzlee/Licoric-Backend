@@ -24,7 +24,16 @@ const contact_1 = __importDefault(require("./routes/contact"));
 const admin_1 = __importDefault(require("./routes/admin"));
 const payment_1 = __importDefault(require("./routes/payment"));
 const shipment_1 = __importDefault(require("./routes/shipment"));
+const shippo_1 = __importDefault(require("./routes/shippo"));
 const notification_1 = __importDefault(require("./routes/notification"));
+const categories_1 = __importDefault(require("./routes/categories"));
+const discounts_1 = __importDefault(require("./routes/discounts"));
+const newsletter_1 = __importDefault(require("./routes/newsletter"));
+const addresses_1 = __importDefault(require("./routes/addresses"));
+const inventory_1 = __importDefault(require("./routes/inventory"));
+const flavors_1 = __importDefault(require("./routes/flavors"));
+const returns_1 = __importDefault(require("./routes/returns"));
+const invoices_1 = __importDefault(require("./routes/invoices"));
 const errorHandler_1 = require("./middleware/errorHandler");
 const notFound_1 = require("./middleware/notFound");
 const socketService_1 = require("./services/socketService");
@@ -75,6 +84,8 @@ app.use((0, cors_1.default)({
 app.use(limiter);
 app.use((0, morgan_1.default)('combined'));
 app.use((0, cookie_parser_1.default)());
+app.use('/api/payment/webhook', express_1.default.raw({ type: 'application/json' }));
+app.use('/api/shippo/webhook', express_1.default.raw({ type: 'application/json' }));
 app.use(express_1.default.json({ limit: '10mb' }));
 app.use(express_1.default.urlencoded({ extended: true, limit: '10mb' }));
 app.get('/health', (req, res) => {
@@ -106,7 +117,16 @@ app.use('/api/contact', contact_1.default);
 app.use('/api/admin', admin_1.default);
 app.use('/api/payment', payment_1.default);
 app.use('/api/shipment', shipment_1.default);
+app.use('/api/shippo', shippo_1.default);
 app.use('/api/notifications', notification_1.default);
+app.use('/api/categories', categories_1.default);
+app.use('/api/discounts', discounts_1.default);
+app.use('/api/newsletter', newsletter_1.default);
+app.use('/api/addresses', addresses_1.default);
+app.use('/api/inventory', inventory_1.default);
+app.use('/api/flavors', flavors_1.default);
+app.use('/api/returns', returns_1.default);
+app.use('/api/invoices', invoices_1.default);
 app.get('/', (req, res) => {
     res.json({
         message: 'Licorice Ropes API v2.0 - TypeScript Edition',

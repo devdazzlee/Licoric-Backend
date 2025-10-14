@@ -23,11 +23,16 @@ import contactRoutes from './routes/contact';
 import adminRoutes from './routes/admin';
 import paymentRoutes from './routes/payment';
 import shipmentRoutes from './routes/shipment';
+import shippoRoutes from './routes/shippo';
 import notificationRoutes from './routes/notification';
 import categoryRoutes from './routes/categories';
 import discountRoutes from './routes/discounts';
 import newsletterRoutes from './routes/newsletter';
 import addressRoutes from './routes/addresses';
+import inventoryRoutes from './routes/inventory';
+import flavorRoutes from './routes/flavors';
+import returnRoutes from './routes/returns';
+import invoiceRoutes from './routes/invoices';
 
 // Import middleware
 import { errorHandler } from './middleware/errorHandler';
@@ -91,6 +96,12 @@ app.use(cors({
 app.use(limiter);
 app.use(morgan('combined'));
 app.use(cookieParser()); // Add cookie parser middleware
+
+// Webhook routes need raw body for signature verification
+app.use('/api/payment/webhook', express.raw({ type: 'application/json' }));
+app.use('/api/shippo/webhook', express.raw({ type: 'application/json' }));
+
+// Regular JSON parsing for all other routes
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
@@ -126,11 +137,16 @@ app.use('/api/contact', contactRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/payment', paymentRoutes);
 app.use('/api/shipment', shipmentRoutes);
+app.use('/api/shippo', shippoRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/categories', categoryRoutes);
 app.use('/api/discounts', discountRoutes);
 app.use('/api/newsletter', newsletterRoutes);
 app.use('/api/addresses', addressRoutes);
+app.use('/api/inventory', inventoryRoutes);
+app.use('/api/flavors', flavorRoutes);
+app.use('/api/returns', returnRoutes);
+app.use('/api/invoices', invoiceRoutes);
 
 // Root endpoint
 app.get('/', (req, res) => {

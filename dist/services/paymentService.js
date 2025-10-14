@@ -8,7 +8,7 @@ const stripe_1 = __importDefault(require("stripe"));
 const client_1 = require("@prisma/client");
 const prisma = new client_1.PrismaClient();
 const stripe = new stripe_1.default(process.env.STRIPE_SECRET_KEY || '', {
-    apiVersion: '2025-09-30.clover',
+    apiVersion: '2024-06-20',
 });
 class PaymentService {
     static async createPaymentIntent(data) {

@@ -1,12 +1,13 @@
 import { PrismaClient } from '@prisma/client';
 import { Response, Request } from 'express';
 import { AuthenticatedRequest } from '../types';
+import { sendEmail, emailTemplates } from '../services/emailService';
 
 const prisma = new PrismaClient();
 
 // @desc    Create new order
 // @route   POST /api/orders
-// @access  Private
+// @access  Public (supports both authenticated and guest checkout)
 export const createOrder = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
   try {
     const {
@@ -19,31 +20,78 @@ export const createOrder = async (req: AuthenticatedRequest, res: Response): Pro
       shippingCountry,
       shippingPhone,
       paymentMethod,
-      notes
+      notes,
+      guestEmail,
+      items // For guest checkout, items come directly from request
     } = req.body;
 
-    // Get user's cart items
-    const cartItems = await prisma.cartItem.findMany({
-      where: { userId: req.user!.id },
-      include: {
-        product: {
-          select: {
-            id: true,
-            name: true,
-            price: true,
-            stock: true,
-            isActive: true
+    const isGuest = !req.user;
+    let cartItems: any[] = [];
+
+    if (isGuest) {
+      // Guest checkout: validate items from request body
+      if (!items || items.length === 0) {
+        res.status(400).json({
+          success: false,
+          message: 'Cart is empty'
+        });
+        return;
+      }
+
+      if (!guestEmail) {
+        res.status(400).json({
+          success: false,
+          message: 'Email is required for guest checkout'
+        });
+        return;
+      }
+
+      // Fetch product details for guest items
+      const productIds = items.map((item: any) => item.productId);
+      const products = await prisma.product.findMany({
+        where: { id: { in: productIds } },
+        select: {
+          id: true,
+          name: true,
+          price: true,
+          stock: true,
+          isActive: true
+        }
+      });
+
+      // Map items with product details
+      cartItems = items.map((item: any) => {
+        const product = products.find(p => p.id === item.productId);
+        return {
+          productId: item.productId,
+          quantity: item.quantity,
+          product
+        };
+      });
+    } else {
+      // Authenticated user: get cart items from database
+      cartItems = await prisma.cartItem.findMany({
+        where: { userId: req.user!.id },
+        include: {
+          product: {
+            select: {
+              id: true,
+              name: true,
+              price: true,
+              stock: true,
+              isActive: true
+            }
           }
         }
-      }
-    });
-
-    if (cartItems.length === 0) {
-      res.status(400).json({
-        success: false,
-        message: 'Cart is empty'
       });
-      return;
+
+      if (cartItems.length === 0) {
+        res.status(400).json({
+          success: false,
+          message: 'Cart is empty'
+        });
+        return;
+      }
     }
 
     // Check stock availability
@@ -83,7 +131,8 @@ export const createOrder = async (req: AuthenticatedRequest, res: Response): Pro
       const order = await tx.order.create({
         data: {
           orderNumber,
-          userId: req.user!.id,
+          userId: isGuest ? null : req.user!.id,
+          guestEmail: isGuest ? guestEmail : null,
           totalAmount,
           shippingAmount,
           taxAmount,
@@ -128,10 +177,12 @@ export const createOrder = async (req: AuthenticatedRequest, res: Response): Pro
         });
       }
 
-      // Clear user's cart
-      await tx.cartItem.deleteMany({
-        where: { userId: req.user!.id }
-      });
+      // Clear user's cart (only for authenticated users)
+      if (!isGuest) {
+        await tx.cartItem.deleteMany({
+          where: { userId: req.user!.id }
+        });
+      }
 
       return { order, orderItems };
     });
@@ -161,6 +212,42 @@ export const createOrder = async (req: AuthenticatedRequest, res: Response): Pro
         }
       }
     });
+
+    // Send order confirmation email
+    if (completeOrder) {
+      const customerEmail = isGuest ? guestEmail : completeOrder.user?.email;
+      const customerName = isGuest 
+        ? `${shippingFirstName} ${shippingLastName}`
+        : `${completeOrder.user?.firstName} ${completeOrder.user?.lastName}`;
+
+      if (customerEmail) {
+        await sendEmail({
+          to: customerEmail,
+          subject: `Order Confirmation - #${completeOrder.orderNumber}`,
+          html: emailTemplates.orderConfirmation({
+            customerName,
+            orderNumber: completeOrder.orderNumber,
+            orderDate: new Date(completeOrder.createdAt).toLocaleDateString(),
+            status: completeOrder.status,
+            items: completeOrder.orderItems.map(item => ({
+              name: item.product.name,
+              quantity: item.quantity,
+              price: Number(item.price).toFixed(2)
+            })),
+            total: Number(completeOrder.totalAmount).toFixed(2),
+            orderId: completeOrder.id,
+            shippingAddress: {
+              firstName: completeOrder.shippingFirstName,
+              lastName: completeOrder.shippingLastName,
+              address: completeOrder.shippingAddress,
+              city: completeOrder.shippingCity,
+              state: completeOrder.shippingState,
+              zipCode: completeOrder.shippingZipCode
+            }
+          })
+        }).catch(err => console.error('Failed to send order email:', err));
+      }
+    }
 
     res.status(201).json({
       success: true,
@@ -276,12 +363,24 @@ export const getOrder = async (req: AuthenticatedRequest, res: Response): Promis
     }
 
     // Check if user owns this order or is admin
-    if (order.userId !== req.user!.id && req.user!.role !== 'ADMIN') {
-      res.status(403).json({
-        success: false,
-        message: 'Access denied'
-      });
-      return;
+    if (req.user) {
+      // Authenticated user: check ownership or admin role
+      if (order.userId !== req.user.id && req.user.role !== 'ADMIN') {
+        res.status(403).json({
+          success: false,
+          message: 'Access denied'
+        });
+        return;
+      }
+    } else {
+      // Guest user: can only access if they don't have a userId (guest order)
+      if (order.userId) {
+        res.status(403).json({
+          success: false,
+          message: 'Access denied'
+        });
+        return;
+      }
     }
 
     res.json({
