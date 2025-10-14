@@ -290,10 +290,14 @@ router.post("/webhook", async (req, res) => {
         headers: {
             "stripe-signature": req.headers["stripe-signature"] ? "present" : "missing",
             "content-type": req.headers["content-type"],
+            "user-agent": req.headers["user-agent"],
         },
+        bodySize: req.body ? Buffer.byteLength(req.body) : 0,
         bodyType: typeof req.body,
         isBuffer: Buffer.isBuffer(req.body),
-        bodyLength: req.body?.length || 0,
+        ip: req.ip,
+        method: req.method,
+        url: req.originalUrl,
     });
     const stripe = getStripe();
     if (!stripe) {
@@ -302,22 +306,38 @@ router.post("/webhook", async (req, res) => {
     }
     const sig = req.headers["stripe-signature"];
     const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+    console.log("🔐 Webhook security check:", {
+        hasSignature: !!sig,
+        hasSecret: !!webhookSecret,
+        secretLength: webhookSecret ? webhookSecret.length : 0,
+        secretPrefix: webhookSecret ? webhookSecret.substring(0, 10) + "..." : "none",
+    });
     if (!sig || !webhookSecret) {
-        console.error("❌ Missing webhook signature or secret");
+        console.error("❌ Missing webhook signature or secret", {
+            hasSignature: !!sig,
+            hasSecret: !!webhookSecret,
+        });
         return res.status(400).send("Missing webhook signature or secret");
     }
     let event;
     try {
-        const payload = Buffer.isBuffer(req.body)
-            ? req.body
-            : JSON.stringify(req.body);
-        event = stripe.webhooks.constructEvent(payload, sig, webhookSecret);
-        console.log("✅ Webhook event verified successfully:", event.type);
+        console.log("🔍 Verifying webhook signature...");
+        event = stripe.webhooks.constructEvent(req.body, sig, webhookSecret);
+        console.log("✅ Webhook event verified successfully:", {
+            type: event.type,
+            id: event.id,
+            created: new Date(event.created * 1000).toISOString(),
+        });
     }
     catch (err) {
         console.error("❌ Webhook signature verification failed:", err.message);
-        console.error("Body type:", typeof req.body);
-        console.error("Is Buffer:", Buffer.isBuffer(req.body));
+        console.error("Debug info:", {
+            bodyType: typeof req.body,
+            isBuffer: Buffer.isBuffer(req.body),
+            bodySize: req.body ? Buffer.byteLength(req.body) : 0,
+            hasSignature: !!sig,
+            hasSecret: !!webhookSecret,
+        });
         return res.status(400).send("Webhook Error");
     }
     try {

@@ -130,7 +130,12 @@ app.use(morgan('combined'));
 // Body parsing middleware - MUST be before cookieParser
 // Use raw body only for webhook routes; json for others
 app.use((req, res, next) => {
-  if (req.originalUrl === "/api/payment/webhook" || req.originalUrl === "/api/shippo/webhook") {
+  if (
+    req.originalUrl === "/api/payment/webhook" || 
+    req.originalUrl === "/payments/webhook" ||
+    req.originalUrl === "/api/shippo/webhook" ||
+    req.originalUrl === "/shippo/webhook"
+  ) {
     express.raw({ type: "application/json" })(req, res, next);
   } else {
     express.json({ limit: "500mb" })(req, res, next);
@@ -173,6 +178,10 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/payment', paymentRoutes);
 app.use('/api/shipment', shipmentRoutes);
 app.use('/api/shippo', shippoRoutes);
+
+// Webhook routes without /api prefix (for Stripe/Shippo webhooks)
+app.use('/payments', paymentRoutes); // Stripe webhook at /payments/webhook
+app.use('/shippo', shippoRoutes); // Shippo webhook at /shippo/webhook
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/categories', categoryRoutes);
 app.use('/api/discounts', discountRoutes);
