@@ -528,18 +528,130 @@ router.post("/webhook", async (req, res) => {
 
         console.log("✅ New order created successfully:", newOrder.id);
 
+       // Create shipment label automatically if shipping info is available
+        try {
+          const { getShippingRates, createShipment } = await import("../services/shipmentService");
+          
+          if (shippingAddress.street && shippingAddress.city && shippingAddress.state && shippingAddress.zip) {
+            console.log("📦 Creating automatic shipment label for order:", newOrder.id);
+            
+            // Calculate total weight from items (default to 0.5 lbs per item)
+            const totalWeight = newOrder.orderItems.reduce((sum, item) => sum + (item.quantity * 0.5), 0);
+            
+            // Get shipping rates
+            const rates = await getShippingRates(
+              {
+                name: shippingAddress.name || 'Customer',
+                street1: shippingAddress.street,
+                city: shippingAddress.city,
+                state: shippingAddress.state,
+                zip: shippingAddress.zip,
+                country: shippingAddress.country || 'US',
+                email: shippingAddress.email || '',
+                phone: shippingAddress.phone || '',
+              },
+              [{
+                length: '10',
+                width: '8',
+                height: '4',
+                distanceUnit: 'in',
+                weight: String(totalWeight || 1),
+                massUnit: 'lb',
+              }]
+            );
+
+            if (rates && rates.length > 0) {
+              // Select cheapest rate
+              const cheapestRate = rates.reduce((min, rate) => 
+                rate.amount < min.amount ? rate : min
+              );
+              
+              console.log("📋 Selected cheapest shipping rate:", {
+                carrier: cheapestRate.carrier,
+                service: cheapestRate.serviceName,
+                amount: cheapestRate.amount,
+              });
+
+              // Create shipment with selected rate
+              const shipment = await createShipment(
+                {
+                  toAddress: {
+                    name: shippingAddress.name || 'Customer',
+                    street1: shippingAddress.street,
+                    city: shippingAddress.city,
+                    state: shippingAddress.state,
+                    zip: shippingAddress.zip,
+                    country: shippingAddress.country || 'US',
+                    email: shippingAddress.email || '',
+                    phone: shippingAddress.phone || '',
+                  },
+                  parcels: [{
+                    length: '10',
+                    width: '8',
+                    height: '4',
+                    distanceUnit: 'in',
+                    weight: String(totalWeight || 1),
+                    massUnit: 'lb',
+                  }],
+                  orderId: newOrder.id,
+                },
+                cheapestRate.objectId,
+                {
+                  carrier: cheapestRate.carrier,
+                  amount: cheapestRate.amount,
+                  serviceName: cheapestRate.serviceName,
+                }
+              );
+
+              console.log("✅ Shipment label created successfully:", {
+                trackingNumber: shipment.trackingNumber,
+                trackingUrl: shipment.trackingUrl,
+              });
+            } else {
+              console.warn("⚠️ No shipping rates available for order:", newOrder.id);
+            }
+          } else {
+            console.warn("⚠️ Incomplete shipping address, skipping automatic shipment creation");
+          }
+        } catch (shipmentError) {
+          console.warn("⚠️ Could not create shipment label:", shipmentError);
+        }
+
         // Send confirmation email
         try {
           const { sendEmail, emailTemplates } = await import("../services/emailService");
-          if (shippingAddress.email) {
+          if (shippingAddress.email && newOrder.orderItems) {
+            // Transform order data to match email template format
+            const emailData = {
+              customerName: shippingAddress.name || 'Customer',
+              orderNumber: newOrder.orderNumber || newOrder.id,
+              orderDate: new Date(newOrder.createdAt).toLocaleDateString(),
+              status: newOrder.status,
+              items: newOrder.orderItems.map((item: any) => ({
+                name: item.productName || 'Product',
+                quantity: item.quantity,
+                price: item.price,
+              })),
+              total: newOrder.totalAmount,
+              shippingAddress: {
+                firstName: shippingAddress.name?.split(' ')[0] || '',
+                lastName: shippingAddress.name?.split(' ').slice(1).join(' ') || '',
+                address: newOrder.shippingStreet || '',
+                city: newOrder.shippingCity || '',
+                state: newOrder.shippingState || '',
+                zipCode: newOrder.shippingZip || '',
+              },
+            };
+
             await sendEmail({
               to: shippingAddress.email,
               subject: 'Order Confirmation',
-              html: emailTemplates.orderConfirmation({ order: newOrder }),
+              html: emailTemplates.orderConfirmation(emailData),
             });
+            console.log("✅ Order confirmation email sent to:", shippingAddress.email);
           }
         } catch (emailError) {
-          console.warn("Email service not available:", emailError);
+          console.warn("❌ Email service not available:", emailError);
         }
       }
     } else if (event.type === "payment_intent.payment_failed") {

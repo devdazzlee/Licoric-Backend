@@ -365,10 +365,13 @@ router.post("/webhook", async (req, res) => {
                 }
                 const shippingDetails = fullSession.shipping_details || null;
                 const customerDetails = fullSession.customer_details || null;
+                const paymentIntentId = typeof fullSession.payment_intent === 'string'
+                    ? fullSession.payment_intent
+                    : fullSession.payment_intent?.id || null;
                 const updateData = {
                     paymentStatus: "COMPLETED",
                     status: "CONFIRMED",
-                    paymentId: fullSession.payment_intent,
+                    paymentId: paymentIntentId,
                     updatedAt: new Date(),
                 };
                 if (fullSession.amount_total && fullSession.amount_total !== Math.round(Number(existingOrder.totalAmount) * 100)) {
@@ -433,6 +436,9 @@ router.post("/webhook", async (req, res) => {
                     }
                 }
                 const orderNumber = `ORD-${Date.now()}-${Math.random().toString(36).substr(2, 9).toUpperCase()}`;
+                const paymentIntentId = typeof fullSession.payment_intent === 'string'
+                    ? fullSession.payment_intent
+                    : fullSession.payment_intent?.id || null;
                 const newOrder = await prisma.order.create({
                     data: {
                         orderNumber,
@@ -441,7 +447,7 @@ router.post("/webhook", async (req, res) => {
                         totalAmount: parseFloat(orderData.total.toString()),
                         status: "CONFIRMED",
                         paymentStatus: "COMPLETED",
-                        paymentId: fullSession.payment_intent,
+                        paymentId: paymentIntentId,
                         orderNotes: orderData.notes || "",
                         shippingStreet: shippingAddress.street || "",
                         shippingCity: shippingAddress.city || "",
@@ -464,17 +470,108 @@ router.post("/webhook", async (req, res) => {
                 });
                 console.log("✅ New order created successfully:", newOrder.id);
                 try {
+                    const { getShippingRates, createShipment } = await Promise.resolve().then(() => __importStar(require("../services/shipmentService")));
+                    if (shippingAddress.street && shippingAddress.city && shippingAddress.state && shippingAddress.zip) {
+                        console.log("📦 Creating automatic shipment label for order:", newOrder.id);
+                        const totalWeight = newOrder.orderItems.reduce((sum, item) => sum + (item.quantity * 0.5), 0);
+                        const rates = await getShippingRates({
+                            name: shippingAddress.name || 'Customer',
+                            street1: shippingAddress.street,
+                            city: shippingAddress.city,
+                            state: shippingAddress.state,
+                            zip: shippingAddress.zip,
+                            country: shippingAddress.country || 'US',
+                            email: shippingAddress.email || '',
+                            phone: shippingAddress.phone || '',
+                        }, [{
+                                length: '10',
+                                width: '8',
+                                height: '4',
+                                distanceUnit: 'in',
+                                weight: String(totalWeight || 1),
+                                massUnit: 'lb',
+                            }]);
+                        if (rates && rates.length > 0) {
+                            const cheapestRate = rates.reduce((min, rate) => rate.amount < min.amount ? rate : min);
+                            console.log("📋 Selected cheapest shipping rate:", {
+                                carrier: cheapestRate.carrier,
+                                service: cheapestRate.serviceName,
+                                amount: cheapestRate.amount,
+                            });
+                            const shipment = await createShipment({
+                                toAddress: {
+                                    name: shippingAddress.name || 'Customer',
+                                    street1: shippingAddress.street,
+                                    city: shippingAddress.city,
+                                    state: shippingAddress.state,
+                                    zip: shippingAddress.zip,
+                                    country: shippingAddress.country || 'US',
+                                    email: shippingAddress.email || '',
+                                    phone: shippingAddress.phone || '',
+                                },
+                                parcels: [{
+                                        length: '10',
+                                        width: '8',
+                                        height: '4',
+                                        distanceUnit: 'in',
+                                        weight: String(totalWeight || 1),
+                                        massUnit: 'lb',
+                                    }],
+                                orderId: newOrder.id,
+                            }, cheapestRate.objectId, {
+                                carrier: cheapestRate.carrier,
+                                amount: cheapestRate.amount,
+                                serviceName: cheapestRate.serviceName,
+                            });
+                            console.log("✅ Shipment label created successfully:", {
+                                trackingNumber: shipment.trackingNumber,
+                                trackingUrl: shipment.trackingUrl,
+                            });
+                        }
+                        else {
+                            console.warn("⚠️ No shipping rates available for order:", newOrder.id);
+                        }
+                    }
+                    else {
+                        console.warn("⚠️ Incomplete shipping address, skipping automatic shipment creation");
+                    }
+                }
+                catch (shipmentError) {
+                    console.warn("⚠️ Could not create shipment label:", shipmentError);
+                }
+                try {
                     const { sendEmail, emailTemplates } = await Promise.resolve().then(() => __importStar(require("../services/emailService")));
-                    if (shippingAddress.email) {
+                    if (shippingAddress.email && newOrder.orderItems) {
+                        const emailData = {
+                            customerName: shippingAddress.name || 'Customer',
+                            orderNumber: newOrder.orderNumber || newOrder.id,
+                            orderDate: new Date(newOrder.createdAt).toLocaleDateString(),
+                            status: newOrder.status,
+                            items: newOrder.orderItems.map((item) => ({
+                                name: item.productName || 'Product',
+                                quantity: item.quantity,
+                                price: item.price,
+                            })),
+                            total: newOrder.totalAmount,
+                            shippingAddress: {
+                                firstName: shippingAddress.name?.split(' ')[0] || '',
+                                lastName: shippingAddress.name?.split(' ').slice(1).join(' ') || '',
+                                address: newOrder.shippingStreet || '',
+                                city: newOrder.shippingCity || '',
+                                state: newOrder.shippingState || '',
+                                zipCode: newOrder.shippingZip || '',
+                            },
+                        };
                         await sendEmail({
                             to: shippingAddress.email,
                             subject: 'Order Confirmation',
-                            html: emailTemplates.orderConfirmation({ order: newOrder }),
+                            html: emailTemplates.orderConfirmation(emailData),
                         });
+                        console.log("✅ Order confirmation email sent to:", shippingAddress.email);
                     }
                 }
                 catch (emailError) {
-                    console.warn("Email service not available:", emailError);
+                    console.warn("❌ Email service not available:", emailError);
                 }
             }
         }

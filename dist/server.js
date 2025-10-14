@@ -39,6 +39,7 @@ const notFound_1 = require("./middleware/notFound");
 const socketService_1 = require("./services/socketService");
 const app = (0, express_1.default)();
 const server = (0, http_1.createServer)(app);
+app.set('trust proxy', 1);
 const socketAllowedOrigins = [
     'http://localhost:3000',
     'http://localhost:3001',
@@ -111,7 +112,10 @@ app.use((0, cors_1.default)({
 app.use(limiter);
 app.use((0, morgan_1.default)('combined'));
 app.use((req, res, next) => {
-    if (req.originalUrl === "/api/payment/webhook" || req.originalUrl === "/api/shippo/webhook") {
+    if (req.originalUrl === "/api/payment/webhook" ||
+        req.originalUrl === "/payments/webhook" ||
+        req.originalUrl === "/api/shippo/webhook" ||
+        req.originalUrl === "/shippo/webhook") {
         express_1.default.raw({ type: "application/json" })(req, res, next);
     }
     else {
@@ -150,6 +154,8 @@ app.use('/api/admin', admin_1.default);
 app.use('/api/payment', payment_1.default);
 app.use('/api/shipment', shipment_1.default);
 app.use('/api/shippo', shippo_1.default);
+app.use('/payments', payment_1.default);
+app.use('/shippo', shippo_1.default);
 app.use('/api/notifications', notification_1.default);
 app.use('/api/categories', categories_1.default);
 app.use('/api/discounts', discounts_1.default);

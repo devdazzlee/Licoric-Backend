@@ -41,6 +41,9 @@ import { setupSocketHandlers } from './services/socketService';
 
 const app = express();
 const server = createServer(app);
+
+// Trust proxy - Required for Vercel deployment and rate limiting
+app.set('trust proxy', 1);
 // Socket.IO CORS configuration
 const socketAllowedOrigins = [
   'http://localhost:3000',
