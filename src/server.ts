@@ -128,20 +128,15 @@ app.use(limiter);
 app.use(morgan('combined'));
 app.use(cookieParser()); // Add cookie parser middleware
 
-// Smart body parsing: raw for webhooks, JSON for everything else
-app.use((req, res, next) => {
-  if (
-    req.originalUrl === "/api/payment/webhook" || 
-    req.originalUrl === "/api/payments/webhook" ||
-    req.originalUrl === "/payments/webhook" ||
-    req.originalUrl === "/api/shippo/webhook"
-  ) {
-    express.raw({ type: "application/json" })(req, res, next);
-  } else {
-    express.json({ limit: "500mb" })(req, res, next);
-  }
-});
+// Webhook routes need raw body for signature verification
+// Apply raw body parser ONLY to webhook endpoints
+app.use('/api/payment/webhook', express.raw({ type: 'application/json' }));
+app.use('/api/payments/webhook', express.raw({ type: 'application/json' }));
+app.use('/payments/webhook', express.raw({ type: 'application/json' }));
+app.use('/api/shippo/webhook', express.raw({ type: 'application/json' }));
 
+// For all other routes, use JSON and URL-encoded parsers
+app.use(express.json({ limit: "500mb" }));
 app.use(express.urlencoded({ extended: true, limit: '500mb' }));
 
 // Health check endpoint
