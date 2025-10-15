@@ -74,7 +74,7 @@ export const calculateCheckoutRates = async (req: Request, res: Response) => {
     
     // Filter out items with invalid productIds
     const validItems = orderItems.filter(item => {
-      if (!item.productId) {
+      if (!item.productId || item.productId === null || item.productId === undefined || item.productId === '') {
         console.warn('⚠️ Skipping item with missing productId:', item);
         return false;
       }
