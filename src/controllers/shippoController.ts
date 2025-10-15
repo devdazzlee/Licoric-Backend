@@ -72,15 +72,43 @@ export const calculateCheckoutRates = async (req: Request, res: Response) => {
     let totalWeight = 0;
     let totalItems = 0;
     
-    for (const item of orderItems) {
+    // Filter out items with invalid productIds
+    const validItems = orderItems.filter(item => {
+      if (!item.productId) {
+        console.warn('⚠️ Skipping item with missing productId:', item);
+        return false;
+      }
+      return true;
+    });
+
+    if (validItems.length === 0) {
+      return res.status(400).json({ 
+        error: 'No valid items found in order. Please refresh your cart.',
+        code: 'INVALID_CART_ITEMS'
+      });
+    }
+    
+    for (const item of validItems) {
       const product = await prisma.product.findUnique({
         where: { id: item.productId },
         select: { name: true },
       });
       
+      if (!product) {
+        console.warn('⚠️ Product not found:', item.productId);
+        continue; // Skip products that don't exist
+      }
+      
       totalItems += item.quantity;
       // Estimate 0.5 lbs per regular product (same as Licrorice)
       totalWeight += item.quantity * 0.5;
+    }
+
+    if (totalItems === 0) {
+      return res.status(400).json({ 
+        error: 'No valid products found. Please refresh your cart.',
+        code: 'NO_VALID_PRODUCTS'
+      });
     }
 
     // Create parcel based on total items (simplified)
