@@ -46,6 +46,8 @@ const socketAllowedOrigins = [
     process.env.FRONTEND_URL,
     process.env.CLIENT_URL,
     'https://licorice-ropes.vercel.app',
+    'https://southernsweetandsour.com',
+    'https://www.southernsweetandsour.com',
 ].filter(Boolean);
 const io = new socket_io_1.Server(server, {
     cors: {
@@ -91,6 +93,8 @@ const allowedOrigins = [
     process.env.FRONTEND_URL,
     process.env.CLIENT_URL,
     'https://licorice-ropes.vercel.app',
+    'https://southernsweetandsour.com',
+    'https://www.southernsweetandsour.com',
 ].filter(Boolean);
 app.use((0, cors_1.default)({
     origin: (origin, callback) => {

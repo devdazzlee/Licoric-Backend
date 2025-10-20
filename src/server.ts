@@ -50,7 +50,9 @@ const socketAllowedOrigins = [
   'http://localhost:3001',
   process.env.FRONTEND_URL,
   process.env.CLIENT_URL,
-  'https://licorice-ropes.vercel.app', // Add your frontend Vercel URL here
+  'https://licorice-ropes.vercel.app',
+  'https://southernsweetandsour.com',
+  'https://www.southernsweetandsour.com', // Include www version
 ].filter(Boolean);
 
 const io = new Server(server, {
@@ -106,7 +108,9 @@ const allowedOrigins = [
   'http://localhost:3001',
   process.env.FRONTEND_URL,
   process.env.CLIENT_URL,
-  'https://licorice-ropes.vercel.app', // Add your frontend Vercel URL here
+  'https://licorice-ropes.vercel.app',
+  'https://southernsweetandsour.com',
+  'https://www.southernsweetandsour.com', // Include www version
 ].filter(Boolean); // Remove undefined values
 
 app.use(cors({

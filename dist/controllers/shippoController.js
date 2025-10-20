@@ -60,13 +60,36 @@ const calculateCheckoutRates = async (req, res) => {
         });
         let totalWeight = 0;
         let totalItems = 0;
-        for (const item of orderItems) {
+        const validItems = orderItems.filter(item => {
+            if (!item.productId || item.productId === null || item.productId === undefined || item.productId === '') {
+                console.warn('⚠️ Skipping item with missing productId:', item);
+                return false;
+            }
+            return true;
+        });
+        if (validItems.length === 0) {
+            return res.status(400).json({
+                error: 'No valid items found in order. Please refresh your cart.',
+                code: 'INVALID_CART_ITEMS'
+            });
+        }
+        for (const item of validItems) {
             const product = await prisma.product.findUnique({
                 where: { id: item.productId },
                 select: { name: true },
             });
+            if (!product) {
+                console.warn('⚠️ Product not found:', item.productId);
+                continue;
+            }
             totalItems += item.quantity;
             totalWeight += item.quantity * 0.5;
+        }
+        if (totalItems === 0) {
+            return res.status(400).json({
+                error: 'No valid products found. Please refresh your cart.',
+                code: 'NO_VALID_PRODUCTS'
+            });
         }
         const parcels = [{
                 length: String(Math.ceil(totalItems / 3) * 4 + 2),
