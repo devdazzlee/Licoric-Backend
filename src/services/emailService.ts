@@ -243,6 +243,90 @@ export const emailTemplates = {
     </html>
   `,
 
+  // Wholesale inquiry notification (to admin)
+  wholesaleInquiry: (inquiryData: any) => `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background: #E85A2D; color: white; padding: 30px; text-align: center; }
+        .content { padding: 30px; background: #f9f9f9; }
+        .info-box { background: white; padding: 20px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #E85A2D; }
+        .highlight { background: #FFF3CD; padding: 15px; border-radius: 5px; margin: 15px 0; }
+        .button { background: #E85A2D; color: white; padding: 12px 30px; text-decoration: none; display: inline-block; border-radius: 5px; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <h1>🏢 New Wholesale Inquiry</h1>
+        </div>
+        <div class="content">
+          <h2>Wholesale Inquiry</h2>
+          <div class="info-box">
+            <p><strong>First Name:</strong> ${inquiryData.FirstName}</p>
+            <p><strong>Last Name:</strong> ${inquiryData.LastName}</p>
+            <p><strong>Email:</strong> ${inquiryData.email}</p>
+            <p><strong>Phone:</strong> ${inquiryData.phone}</p>
+            <p><strong>Message:</strong> ${inquiryData.message}</p>
+          </div>
+        </div>
+      </div>
+    </body>
+    </html>
+  `,
+
+  // Wholesale inquiry confirmation (to customer)
+  wholesaleConfirmation: (customerData: any) => `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background: #E85A2D; color: white; padding: 30px; text-align: center; }
+        .content { padding: 30px; background: #f9f9f9; }
+        .highlight { background: #E3F2FD; padding: 20px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #2196F3; }
+        .contact-info { background: white; padding: 20px; border-radius: 5px; margin: 20px 0; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <h1>✅ Wholesale Inquiry Received</h1>
+        </div>
+        <div class="content">
+          <h2>Thank you for your interest!</h2>
+          <p>Hi ${customerData.FirstName} ${customerData.LastName},</p>
+          <p>Thank you for reaching out to us regarding wholesale opportunities.</p>
+          
+          <div class="highlight">
+            <h3 style="margin-top: 0; color: #1976D2;">What happens next?</h3>
+            <ul>
+              <li>Our wholesale team will review your inquiry within 24 hours</li>
+              <li>We'll contact you with competitive pricing and terms</li>
+              <li>We'll discuss your specific needs and requirements</li>
+              <li>We'll provide samples if requested</li>
+            </ul>
+          </div>
+
+          <div class="contact-info">
+            <h3>Our Wholesale Team</h3>
+            <p><strong>Email:</strong> ${customerData.email}</p>
+            <p><strong>Phone:</strong> ${customerData.phone}</p>
+            <p><strong>Business Hours:</strong> Monday - Friday, 9AM - 5PM EST</p>
+          </div>
+
+          <p>We look forward to partnering with you!</p>
+          <p><strong>The Licorice Ropes Team</strong></p>
+        </div>
+      </div>
+    </body>
+    </html>
+  `,
+
   // Return/Refund approved
   refundApproved: (refundData: any) => `
     <!DOCTYPE html>

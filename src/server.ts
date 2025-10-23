@@ -32,7 +32,7 @@ import addressRoutes from './routes/addresses';
 import inventoryRoutes from './routes/inventory';
 import flavorRoutes from './routes/flavors';
 import returnRoutes from './routes/returns';
-import invoiceRoutes from './routes/invoices';
+import wholesaleRoutes from './routes/wholesale';
 
 // Import middleware
 import { errorHandler } from './middleware/errorHandler';
@@ -197,7 +197,7 @@ app.use('/api/addresses', addressRoutes);
 app.use('/api/inventory', inventoryRoutes);
 app.use('/api/flavors', flavorRoutes);
 app.use('/api/returns', returnRoutes);
-app.use('/api/invoices', invoiceRoutes);
+app.use('/api/wholesale', wholesaleRoutes);
 
 // Root endpoint
 app.get('/', (req, res) => {
