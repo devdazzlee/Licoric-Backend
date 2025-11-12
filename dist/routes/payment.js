@@ -1,0 +1,864 @@
+"use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = __importDefault(require("express"));
+const stripe_1 = __importDefault(require("stripe"));
+const client_1 = require("@prisma/client");
+const router = express_1.default.Router();
+const prisma = new client_1.PrismaClient();
+function getStripe() {
+    const key = process.env.STRIPE_SECRET_KEY;
+    if (!key)
+        return null;
+    return new stripe_1.default(key, { apiVersion: "2024-06-20" });
+}
+router.post("/create-checkout-session", async (req, res) => {
+    try {
+        const stripe = getStripe();
+        if (!stripe) {
+            return res.status(503).json({ message: "Stripe not configured" });
+        }
+        const { orderId, orderData, items, successUrl, cancelUrl, selectedShippingRate, } = req.body || {};
+        if (!Array.isArray(items) || items.length === 0) {
+            return res.status(400).json({ message: "No items provided" });
+        }
+        const line_items = items.map((it) => ({
+            price_data: {
+                currency: "usd",
+                product_data: { name: String(it.productName || it.name || "Item") },
+                unit_amount: Math.max(0, Math.round(Number(it.price || 0) * 100)),
+            },
+            quantity: Math.max(1, Number(it.quantity || 1)),
+        }));
+        const metadata = {};
+        if (orderId) {
+            const existingOrder = await prisma.order.findUnique({
+                where: { id: orderId },
+            });
+            if (!existingOrder) {
+                return res.status(404).json({ message: "Order not found" });
+            }
+            metadata.orderId = String(orderId);
+        }
+        else if (orderData) {
+            const productItems = orderData.orderItems || [];
+            const productIds = productItems
+                .map((item) => `${item.productId || item.pid}:${item.quantity || 1}:${Number(item.price || 0).toFixed(2)}`)
+                .join(",");
+            if (orderData.userId) {
+                metadata.userId = String(orderData.userId);
+            }
+            if (orderData.shippingAddress?.email) {
+                metadata.guestEmail = String(orderData.shippingAddress.email);
+            }
+            metadata.products = productIds.substring(0, 400);
+            if (selectedShippingRate) {
+                metadata.shippingRateId = selectedShippingRate.objectId;
+                metadata.shippingCarrier = selectedShippingRate.carrier;
+                metadata.shippingAmount = String(selectedShippingRate.amount);
+                metadata.shippingService = selectedShippingRate.serviceName;
+            }
+            if (orderData.orderNotes) {
+                metadata.notes = String(orderData.orderNotes).substring(0, 50);
+            }
+            if (orderData.shippingAddress) {
+                const addr = orderData.shippingAddress;
+                metadata.addrName = addr.name?.substring(0, 50) || "";
+                metadata.addrStreet = addr.street?.substring(0, 50) || "";
+                metadata.addrCity = addr.city?.substring(0, 30) || "";
+                metadata.addrState = addr.state?.substring(0, 20) || "";
+                metadata.addrZip = addr.zipCode?.substring(0, 10) || "";
+                metadata.addrCountry = addr.country?.substring(0, 10) || "";
+                if (addr.phone) {
+                    metadata.addrPhone = addr.phone.substring(0, 20);
+                }
+            }
+        }
+        else {
+            return res
+                .status(400)
+                .json({ message: "Either orderId or orderData must be provided" });
+        }
+        const hasPreCollectedAddress = orderData?.shippingAddress?.name;
+        const session = await stripe.checkout.sessions.create({
+            mode: "payment",
+            line_items,
+            success_url: successUrl ||
+                `${process.env.CLIENT_URL}/orders/success?session_id={CHECKOUT_SESSION_ID}`,
+            cancel_url: cancelUrl || `${process.env.CLIENT_URL}/cart`,
+            metadata,
+            billing_address_collection: "required",
+            ...(hasPreCollectedAddress
+                ? {}
+                : {
+                    shipping_address_collection: {
+                        allowed_countries: ["US", "CA", "GB", "AU"],
+                    },
+                    phone_number_collection: {
+                        enabled: true,
+                    },
+                }),
+        });
+        return res.json({ url: session.url });
+    }
+    catch (err) {
+        console.error("Stripe session error:", err);
+        return res
+            .status(500)
+            .json({ message: "Failed to create checkout session" });
+    }
+});
+router.post("/retry-payment", async (req, res) => {
+    try {
+        const stripe = getStripe();
+        if (!stripe) {
+            return res.status(503).json({ message: "Stripe not configured" });
+        }
+        const { orderId, successUrl, cancelUrl } = req.body || {};
+        if (!orderId) {
+            return res.status(400).json({ message: "Order ID is required" });
+        }
+        const order = await prisma.order.findUnique({
+            where: { id: orderId },
+            include: {
+                orderItems: true,
+            },
+        });
+        if (!order) {
+            return res.status(404).json({ message: "Order not found" });
+        }
+        if (order.paymentStatus !== "FAILED") {
+            return res.status(400).json({
+                message: "Can only retry payment for failed orders",
+                currentStatus: order.paymentStatus,
+            });
+        }
+        const line_items = order.orderItems.map((item) => ({
+            price_data: {
+                currency: "usd",
+                product_data: {
+                    name: String(item.productName || item.productId || "Item"),
+                },
+                unit_amount: Math.max(0, Math.round(Number(item.price || 0) * 100)),
+            },
+            quantity: Math.max(1, Number(item.quantity || 1)),
+        }));
+        const session = await stripe.checkout.sessions.create({
+            mode: "payment",
+            line_items,
+            success_url: successUrl ||
+                `${process.env.CLIENT_URL}/orders/success?session_id={CHECKOUT_SESSION_ID}`,
+            cancel_url: cancelUrl || `${process.env.CLIENT_URL}/profile`,
+            metadata: {
+                orderId: String(orderId),
+                isRetry: "true",
+            },
+            billing_address_collection: "required",
+            shipping_address_collection: {
+                allowed_countries: ["US", "CA", "GB", "AU"],
+            },
+            phone_number_collection: {
+                enabled: true,
+            },
+        });
+        await prisma.order.update({
+            where: { id: orderId },
+            data: {
+                paymentStatus: "PENDING",
+                updatedAt: new Date(),
+            },
+        });
+        return res.json({ url: session.url });
+    }
+    catch (err) {
+        console.error("Payment retry error:", err);
+        return res
+            .status(500)
+            .json({ message: "Failed to create retry payment session" });
+    }
+});
+router.post("/verify-payment-status", async (req, res) => {
+    try {
+        const stripe = getStripe();
+        if (!stripe) {
+            return res.status(503).json({ message: "Stripe not configured" });
+        }
+        const { orderId } = req.body;
+        if (!orderId) {
+            return res.status(400).json({ message: "Order ID is required" });
+        }
+        const order = await prisma.order.findUnique({
+            where: { id: orderId },
+        });
+        if (!order) {
+            return res.status(404).json({ message: "Order not found" });
+        }
+        const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+        if (order.paymentStatus === "PENDING" && order.updatedAt < oneHourAgo) {
+            const sessions = await stripe.checkout.sessions.list({
+                limit: 10,
+            });
+            const orderSession = sessions.data.find((session) => session.metadata?.orderId === orderId);
+            if (orderSession) {
+                if (orderSession.payment_status === "paid") {
+                    await prisma.order.update({
+                        where: { id: orderId },
+                        data: {
+                            paymentStatus: "COMPLETED",
+                            status: "CONFIRMED",
+                            updatedAt: new Date(),
+                        },
+                    });
+                    return res.json({
+                        message: "Payment status updated to paid",
+                        paymentStatus: "paid",
+                        fixed: true,
+                    });
+                }
+                else if (orderSession.payment_status === "unpaid") {
+                    await prisma.order.update({
+                        where: { id: orderId },
+                        data: {
+                            paymentStatus: "FAILED",
+                            updatedAt: new Date(),
+                        },
+                    });
+                    return res.json({
+                        message: "Payment status updated to failed",
+                        paymentStatus: "failed",
+                        fixed: true,
+                    });
+                }
+            }
+            else {
+                await prisma.order.update({
+                    where: { id: orderId },
+                    data: {
+                        paymentStatus: "FAILED",
+                        updatedAt: new Date(),
+                    },
+                });
+                return res.json({
+                    message: "No payment session found, marked as failed",
+                    paymentStatus: "failed",
+                    fixed: true,
+                });
+            }
+        }
+        return res.json({
+            message: "Payment status is current",
+            paymentStatus: order.paymentStatus,
+            fixed: false,
+        });
+    }
+    catch (error) {
+        console.error("Payment verification error:", error);
+        return res.status(500).json({ message: "Failed to verify payment status" });
+    }
+});
+router.get("/session/:sessionId", async (req, res) => {
+    try {
+        const stripe = getStripe();
+        if (!stripe) {
+            return res.status(503).json({ message: "Stripe not configured" });
+        }
+        const { sessionId } = req.params;
+        if (!sessionId) {
+            return res.status(400).json({ message: "Session ID is required" });
+        }
+        const session = await stripe.checkout.sessions.retrieve(sessionId, {
+            expand: ["line_items", "customer", "payment_intent"],
+        });
+        res.json({
+            session: {
+                id: session.id,
+                amount_total: session.amount_total,
+                amount_subtotal: session.amount_subtotal,
+                currency: session.currency,
+                status: session.status,
+                payment_status: session.payment_status,
+                metadata: session.metadata,
+                customer_details: session.customer_details,
+                shipping_details: session.shipping_details || null,
+                line_items: session.line_items?.data || [],
+            },
+        });
+    }
+    catch (error) {
+        console.error("Error fetching Stripe session:", error);
+        res.status(500).json({
+            error: "Failed to fetch session",
+            message: error.message,
+        });
+    }
+});
+router.post("/webhook", async (req, res) => {
+    const webhookStartTime = Date.now();
+    console.log("🔔 Webhook received:", {
+        timestamp: new Date().toISOString(),
+        headers: {
+            "stripe-signature": req.headers["stripe-signature"]
+                ? "present"
+                : "missing",
+            "content-type": req.headers["content-type"],
+            "user-agent": req.headers["user-agent"],
+        },
+        bodySize: req.body ? Buffer.byteLength(req.body) : 0,
+        bodyType: typeof req.body,
+        isBuffer: Buffer.isBuffer(req.body),
+        ip: req.ip,
+        method: req.method,
+        url: req.originalUrl,
+    });
+    const stripe = getStripe();
+    if (!stripe) {
+        console.error("❌ Stripe not configured");
+        return res.status(503).send("Stripe not configured");
+    }
+    const sig = req.headers["stripe-signature"];
+    const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+    console.log("🔐 Webhook security check:", {
+        hasSignature: !!sig,
+        hasSecret: !!webhookSecret,
+        secretLength: webhookSecret ? webhookSecret.length : 0,
+        secretPrefix: webhookSecret
+            ? webhookSecret.substring(0, 10) + "..."
+            : "none",
+    });
+    if (!sig || !webhookSecret) {
+        console.error("❌ Missing webhook signature or secret", {
+            hasSignature: !!sig,
+            hasSecret: !!webhookSecret,
+        });
+        return res.status(400).send("Missing webhook signature or secret");
+    }
+    let event;
+    try {
+        console.log("🔍 Verifying webhook signature...");
+        event = stripe.webhooks.constructEvent(req.body, sig, webhookSecret);
+        console.log("✅ Webhook event verified successfully:", {
+            type: event.type,
+            id: event.id,
+            created: new Date(event.created * 1000).toISOString(),
+        });
+    }
+    catch (err) {
+        console.error("❌ Webhook signature verification failed:", err.message);
+        console.error("Debug info:", {
+            bodyType: typeof req.body,
+            isBuffer: Buffer.isBuffer(req.body),
+            bodySize: req.body ? Buffer.byteLength(req.body) : 0,
+            hasSignature: !!sig,
+            hasSecret: !!webhookSecret,
+        });
+        return res.status(400).send("Webhook Error");
+    }
+    try {
+        console.log(`🎯 Processing webhook event: ${event.type}`);
+        if (event.type === "checkout.session.completed") {
+            const session = event.data.object;
+            const fullSession = await stripe.checkout.sessions.retrieve(session.id, {
+                expand: ["line_items", "payment_intent"],
+            });
+            const orderId = fullSession.metadata?.orderId;
+            const isRetry = fullSession.metadata?.isRetry === "true";
+            console.log("💳 Processing checkout.session.completed:", {
+                sessionId: fullSession.id,
+                orderId,
+                isRetry,
+                paymentStatus: fullSession.payment_status,
+            });
+            if (orderId) {
+                const existingOrder = await prisma.order.findUnique({
+                    where: { id: orderId },
+                    include: {
+                        orderItems: true,
+                    },
+                });
+                if (!existingOrder) {
+                    console.error("❌ Order not found for webhook:", orderId);
+                    return res.status(404).json({ error: "Order not found" });
+                }
+                const shippingDetails = fullSession.shipping_details || null;
+                const customerDetails = fullSession.customer_details || null;
+                const paymentIntentId = typeof fullSession.payment_intent === "string"
+                    ? fullSession.payment_intent
+                    : fullSession.payment_intent?.id || null;
+                const updateData = {
+                    paymentStatus: "COMPLETED",
+                    status: "CONFIRMED",
+                    paymentId: paymentIntentId,
+                    updatedAt: new Date(),
+                };
+                if (shippingDetails || customerDetails) {
+                    const addressData = shippingDetails?.address || customerDetails?.address;
+                    if (addressData) {
+                        updateData.shippingStreet = addressData.line1 || "";
+                        updateData.shippingCity = addressData.city || "";
+                        updateData.shippingState = addressData.state || "";
+                        updateData.shippingZip = addressData.postal_code || "";
+                        updateData.shippingZipCode = addressData.postal_code || "";
+                        updateData.shippingCountry = addressData.country || "";
+                        if (customerDetails?.name) {
+                            const nameParts = customerDetails.name.split(" ");
+                            updateData.shippingFirstName = nameParts[0] || null;
+                            updateData.shippingLastName =
+                                nameParts.slice(1).join(" ") || null;
+                        }
+                        if (customerDetails?.email) {
+                            updateData.guestEmail = customerDetails.email;
+                        }
+                        if (customerDetails?.phone || shippingDetails?.phone) {
+                            updateData.shippingPhone =
+                                customerDetails?.phone || shippingDetails?.phone || null;
+                        }
+                    }
+                }
+                await prisma.order.update({
+                    where: { id: orderId },
+                    data: updateData,
+                });
+                console.log("✅ Order updated successfully:", orderId);
+                const shippingRateId = fullSession.metadata?.shippingRateId;
+                if (shippingRateId && existingOrder.shippingStreet) {
+                    try {
+                        const { createShipment } = await Promise.resolve().then(() => __importStar(require("../services/shipmentService")));
+                        const shippingAddress = {
+                            name: existingOrder.shippingFirstName &&
+                                existingOrder.shippingLastName
+                                ? `${existingOrder.shippingFirstName} ${existingOrder.shippingLastName}`
+                                : existingOrder.shippingFirstName || "Customer",
+                            street: existingOrder.shippingStreet || "",
+                            city: existingOrder.shippingCity || "",
+                            state: existingOrder.shippingState || "",
+                            zip: existingOrder.shippingZip ||
+                                existingOrder.shippingZipCode ||
+                                "",
+                            country: existingOrder.shippingCountry || "US",
+                            email: existingOrder.guestEmail || "",
+                            phone: existingOrder.shippingPhone || "",
+                        };
+                        const shippingRateInfo = {
+                            objectId: shippingRateId,
+                            carrier: fullSession.metadata?.shippingCarrier || "",
+                            amount: fullSession.metadata?.shippingAmount
+                                ? parseFloat(fullSession.metadata.shippingAmount)
+                                : 0,
+                            serviceName: fullSession.metadata?.shippingService || "",
+                        };
+                        await createShipment({
+                            orderId: existingOrder.id,
+                            toAddress: {
+                                name: shippingAddress.name,
+                                street1: shippingAddress.street,
+                                city: shippingAddress.city,
+                                state: shippingAddress.state,
+                                zip: shippingAddress.zip,
+                                country: shippingAddress.country,
+                                email: shippingAddress.email,
+                                phone: shippingAddress.phone,
+                            },
+                            parcels: [
+                                {
+                                    length: "6",
+                                    width: "4",
+                                    height: "2",
+                                    weight: "0.5",
+                                    massUnit: "lb",
+                                    distanceUnit: "in",
+                                },
+                            ],
+                        }, shippingRateId, shippingRateInfo);
+                        console.log("📦 Shippo shipment created for order");
+                    }
+                    catch (shipmentError) {
+                        console.error("⚠️ Failed to create Shippo shipment:", shipmentError);
+                    }
+                }
+                try {
+                    const { sendEmail, emailTemplates } = await Promise.resolve().then(() => __importStar(require("../services/emailService")));
+                    const customerEmail = existingOrder.guestEmail ||
+                        (existingOrder.userId
+                            ? (await prisma.user.findUnique({
+                                where: { id: existingOrder.userId },
+                                select: { email: true },
+                            }))?.email
+                            : null);
+                    if (customerEmail) {
+                        const orderWithShipping = await prisma.order.findUnique({
+                            where: { id: existingOrder.id },
+                            select: {
+                                trackingNumber: true,
+                                trackingUrl: true,
+                                shippingCarrier: true,
+                                shippingService: true,
+                                shippingCost: true,
+                            },
+                        });
+                        const customerName = existingOrder.shippingFirstName && existingOrder.shippingLastName
+                            ? `${existingOrder.shippingFirstName} ${existingOrder.shippingLastName}`
+                            : existingOrder.shippingFirstName || "Customer";
+                        const emailData = {
+                            customerName,
+                            orderNumber: existingOrder.orderNumber || existingOrder.id,
+                            orderId: existingOrder.id,
+                            orderDate: new Date(existingOrder.createdAt).toLocaleDateString(),
+                            status: "CONFIRMED",
+                            items: existingOrder.orderItems.map((item) => ({
+                                name: item.productName || "Product",
+                                quantity: item.quantity,
+                                price: item.price,
+                            })),
+                            total: existingOrder.totalAmount,
+                            shippingAddress: {
+                                firstName: existingOrder.shippingFirstName || "",
+                                lastName: existingOrder.shippingLastName || "",
+                                address: existingOrder.shippingStreet || "",
+                                city: existingOrder.shippingCity || "",
+                                state: existingOrder.shippingState || "",
+                                zipCode: existingOrder.shippingZip ||
+                                    existingOrder.shippingZipCode ||
+                                    "",
+                            },
+                            shippingDetails: orderWithShipping
+                                ? {
+                                    trackingNumber: orderWithShipping.trackingNumber,
+                                    trackingUrl: orderWithShipping.trackingUrl,
+                                    carrier: orderWithShipping.shippingCarrier,
+                                    service: orderWithShipping.shippingService,
+                                    shippingCost: orderWithShipping.shippingCost
+                                        ? Number(orderWithShipping.shippingCost)
+                                        : null,
+                                }
+                                : undefined,
+                        };
+                        await sendEmail({
+                            to: customerEmail,
+                            subject: "Order Confirmation - Licorice Ropes",
+                            html: emailTemplates.orderConfirmation(emailData),
+                        });
+                        console.log("✅ Order confirmation email sent to:", customerEmail);
+                    }
+                }
+                catch (emailError) {
+                    console.warn("❌ Email service not available:", emailError);
+                }
+            }
+            else if (fullSession.metadata?.products) {
+                console.log("📝 Creating new order from webhook metadata");
+                const metadata = fullSession.metadata;
+                const productData = metadata.products.split(",").map((item) => {
+                    const [productId, quantity, price] = item.split(":");
+                    return {
+                        productId,
+                        quantity: parseInt(quantity) || 1,
+                        price: parseFloat(price) || 0,
+                    };
+                });
+                let shippingAddress = {};
+                const shippingDetails = fullSession.shipping_details || null;
+                const customerDetails = fullSession.customer_details || null;
+                if (metadata.addrName) {
+                    shippingAddress = {
+                        name: metadata.addrName,
+                        email: metadata.guestEmail || customerDetails?.email || "",
+                        phone: metadata.addrPhone || customerDetails?.phone || "",
+                        street: metadata.addrStreet,
+                        city: metadata.addrCity,
+                        state: metadata.addrState,
+                        zip: metadata.addrZip,
+                        country: metadata.addrCountry || "US",
+                    };
+                }
+                else if (shippingDetails || customerDetails) {
+                    const addressData = shippingDetails?.address || customerDetails?.address;
+                    if (addressData) {
+                        shippingAddress = {
+                            name: shippingDetails?.name || customerDetails?.name || "",
+                            email: customerDetails?.email || metadata.guestEmail || "",
+                            phone: customerDetails?.phone || shippingDetails?.phone || "",
+                            street: addressData.line1 || "",
+                            city: addressData.city || "",
+                            state: addressData.state || "",
+                            zip: addressData.postal_code || "",
+                            country: addressData.country || "US",
+                        };
+                    }
+                }
+                const amountTotal = fullSession.amount_total
+                    ? fullSession.amount_total / 100
+                    : 0;
+                const shippingAmount = metadata.shippingAmount
+                    ? parseFloat(metadata.shippingAmount)
+                    : 0;
+                const taxAmount = amountTotal -
+                    shippingAmount -
+                    productData.reduce((sum, item) => sum + item.price * item.quantity, 0);
+                const orderNumber = `ORD-${Date.now()}-${Math.random()
+                    .toString(36)
+                    .substr(2, 9)
+                    .toUpperCase()}`;
+                const paymentIntentId = typeof fullSession.payment_intent === "string"
+                    ? fullSession.payment_intent
+                    : fullSession.payment_intent?.id || null;
+                const newOrder = await prisma.$transaction(async (tx) => {
+                    const order = await tx.order.create({
+                        data: {
+                            orderNumber,
+                            userId: metadata.userId || null,
+                            guestEmail: shippingAddress.email || metadata.guestEmail || null,
+                            totalAmount: amountTotal,
+                            shippingAmount,
+                            taxAmount,
+                            status: "CONFIRMED",
+                            paymentStatus: "COMPLETED",
+                            paymentId: paymentIntentId,
+                            orderNotes: metadata.notes || "",
+                            shippingFirstName: shippingAddress.name?.split(" ")[0] || null,
+                            shippingLastName: shippingAddress.name?.split(" ").slice(1).join(" ") || null,
+                            shippingStreet: shippingAddress.street || null,
+                            shippingCity: shippingAddress.city || null,
+                            shippingState: shippingAddress.state || null,
+                            shippingZip: shippingAddress.zip || null,
+                            shippingZipCode: shippingAddress.zip || null,
+                            shippingCountry: shippingAddress.country || null,
+                            shippingPhone: shippingAddress.phone || null,
+                        },
+                    });
+                    const orderItems = [];
+                    for (const item of productData) {
+                        const product = await tx.product.findUnique({
+                            where: { id: item.productId },
+                            select: { name: true },
+                        });
+                        const orderItem = await tx.orderItem.create({
+                            data: {
+                                orderId: order.id,
+                                productId: item.productId,
+                                productName: product?.name || "Product",
+                                quantity: item.quantity,
+                                price: item.price,
+                                total: item.price * item.quantity,
+                            },
+                        });
+                        orderItems.push(orderItem);
+                    }
+                    return { order, orderItems };
+                });
+                console.log("✅ New order created successfully:", newOrder.order.id);
+                const shippingRateId = metadata.shippingRateId;
+                const shippingRateInfo = shippingRateId
+                    ? {
+                        objectId: shippingRateId,
+                        carrier: metadata.shippingCarrier || "",
+                        amount: metadata.shippingAmount
+                            ? parseFloat(metadata.shippingAmount)
+                            : 0,
+                        serviceName: metadata.shippingService || "",
+                    }
+                    : null;
+                if (shippingRateId && shippingRateInfo && shippingAddress.street) {
+                    try {
+                        const { createShipment } = await Promise.resolve().then(() => __importStar(require("../services/shipmentService")));
+                        await createShipment({
+                            orderId: newOrder.order.id,
+                            toAddress: {
+                                name: shippingAddress.name || "Customer",
+                                street1: shippingAddress.street,
+                                city: shippingAddress.city,
+                                state: shippingAddress.state,
+                                zip: shippingAddress.zip,
+                                country: shippingAddress.country || "US",
+                                email: shippingAddress.email || "",
+                                phone: shippingAddress.phone || "",
+                            },
+                            parcels: [
+                                {
+                                    length: "6",
+                                    width: "4",
+                                    height: "2",
+                                    weight: "0.5",
+                                    massUnit: "lb",
+                                    distanceUnit: "in",
+                                },
+                            ],
+                        }, shippingRateId, {
+                            carrier: shippingRateInfo.carrier,
+                            amount: shippingRateInfo.amount,
+                            serviceName: shippingRateInfo.serviceName,
+                        });
+                        console.log("📦 Shippo shipment created for new order");
+                    }
+                    catch (shipmentError) {
+                        console.error("⚠️ Failed to create Shippo shipment:", shipmentError);
+                    }
+                }
+                try {
+                    const { sendEmail, emailTemplates } = await Promise.resolve().then(() => __importStar(require("../services/emailService")));
+                    const customerEmail = shippingAddress.email ||
+                        metadata.guestEmail ||
+                        (metadata.userId
+                            ? (await prisma.user.findUnique({
+                                where: { id: metadata.userId },
+                                select: { email: true },
+                            }))?.email
+                            : null);
+                    if (customerEmail) {
+                        const orderWithShipping = await prisma.order.findUnique({
+                            where: { id: newOrder.order.id },
+                            select: {
+                                trackingNumber: true,
+                                trackingUrl: true,
+                                shippingCarrier: true,
+                                shippingService: true,
+                                shippingCost: true,
+                            },
+                        });
+                        const emailData = {
+                            customerName: shippingAddress.name || "Customer",
+                            orderNumber: newOrder.order.orderNumber,
+                            orderId: newOrder.order.id,
+                            orderDate: new Date(newOrder.order.createdAt).toLocaleDateString(),
+                            status: "CONFIRMED",
+                            items: newOrder.orderItems.map((item) => ({
+                                name: item.productName || "Product",
+                                quantity: item.quantity,
+                                price: item.price,
+                            })),
+                            total: newOrder.order.totalAmount,
+                            shippingAddress: {
+                                firstName: shippingAddress.name?.split(" ")[0] || "",
+                                lastName: shippingAddress.name?.split(" ").slice(1).join(" ") || "",
+                                address: shippingAddress.street || "",
+                                city: shippingAddress.city || "",
+                                state: shippingAddress.state || "",
+                                zipCode: shippingAddress.zip || "",
+                            },
+                            shippingDetails: orderWithShipping
+                                ? {
+                                    trackingNumber: orderWithShipping.trackingNumber,
+                                    trackingUrl: orderWithShipping.trackingUrl,
+                                    carrier: orderWithShipping.shippingCarrier,
+                                    service: orderWithShipping.shippingService,
+                                    shippingCost: orderWithShipping.shippingCost
+                                        ? Number(orderWithShipping.shippingCost)
+                                        : null,
+                                }
+                                : undefined,
+                        };
+                        await sendEmail({
+                            to: customerEmail,
+                            subject: "Order Confirmation - Licorice Ropes",
+                            html: emailTemplates.orderConfirmation(emailData),
+                        });
+                        console.log("✅ Order confirmation email sent to:", customerEmail);
+                    }
+                }
+                catch (emailError) {
+                    console.warn("❌ Email service not available:", emailError);
+                }
+            }
+            else {
+                console.error("❌ Missing order data in webhook metadata");
+                return res
+                    .status(400)
+                    .json({ error: "Missing order data in metadata" });
+            }
+        }
+        else if (event.type === "payment_intent.payment_failed") {
+            const pi = event.data.object;
+            console.log("❌ Payment failed:", pi.id);
+            const orderId = pi.metadata?.orderId;
+            if (orderId) {
+                await prisma.order.update({
+                    where: { id: orderId },
+                    data: {
+                        paymentStatus: "FAILED",
+                        status: "CANCELLED",
+                        updatedAt: new Date(),
+                    },
+                });
+                console.log("✅ Order marked as failed:", orderId);
+            }
+        }
+        else if (event.type === "charge.refunded") {
+            const charge = event.data.object;
+            console.log("💸 Charge refunded:", charge.id);
+            const order = await prisma.order.findFirst({
+                where: { paymentId: charge.payment_intent },
+            });
+            if (order) {
+                await prisma.order.update({
+                    where: { id: order.id },
+                    data: {
+                        paymentStatus: "REFUNDED",
+                        status: "REFUNDED",
+                        updatedAt: new Date(),
+                    },
+                });
+            }
+        }
+        return res.json({ received: true });
+    }
+    catch (error) {
+        console.error("❌ Webhook processing error:", error);
+        return res.status(500).json({ error: "Webhook processing failed" });
+    }
+});
+router.get("/health", async (req, res) => {
+    try {
+        const stripe = getStripe();
+        if (!stripe) {
+            return res.status(503).json({ message: "Stripe not configured" });
+        }
+        const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+        return res.json({
+            status: "healthy",
+            configured: {
+                hasStripe: !!stripe,
+                hasWebhookSecret: !!webhookSecret,
+            },
+            timestamp: new Date().toISOString(),
+        });
+    }
+    catch (error) {
+        return res.status(500).json({ message: "Health check failed" });
+    }
+});
+exports.default = router;
+//# sourceMappingURL=payment.js.map
